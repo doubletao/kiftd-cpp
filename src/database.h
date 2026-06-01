@@ -56,6 +56,7 @@ public:
     bool create_user(const std::string& id, const std::string& password_hash, const std::string& salt);
     User get_user(const std::string& id);
     bool user_exists(const std::string& id);
+    bool delete_user(const std::string& id);
 
     // Folders
     bool create_folder(const Folder& f);

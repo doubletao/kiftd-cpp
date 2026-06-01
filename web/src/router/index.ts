@@ -29,10 +29,12 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   if (to.meta.requiresAuth) {
-    const user = document.cookie.includes('kiftd_user=')
-    if (!user) {
+    try {
+      const res = await fetch('/api/auth/me', { credentials: 'same-origin' })
+      if (!res.ok) return { name: 'login' }
+    } catch {
       return { name: 'login' }
     }
   }

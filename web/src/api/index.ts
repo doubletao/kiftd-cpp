@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { sha256 } from '../utils/sha256'
 
 const api = axios.create({
   baseURL: '/api',
@@ -6,8 +7,10 @@ const api = axios.create({
 })
 
 // Auth
-export const login = (username: string, password: string) =>
-  api.post('/auth/login', { username, password })
+export async function login(username: string, password: string) {
+  const hashed = await sha256(password)
+  return api.post('/auth/login', { username, password: hashed })
+}
 
 export const logout = () => api.post('/auth/logout')
 

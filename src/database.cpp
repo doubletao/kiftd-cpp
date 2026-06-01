@@ -123,6 +123,15 @@ bool Database::user_exists(const std::string& id) {
     return exists;
 }
 
+bool Database::delete_user(const std::string& id) {
+    auto stmt = prepare("DELETE FROM users WHERE id = ?");
+    if (!stmt) return false;
+    sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
 // --- Folders ---
 
 bool Database::create_folder(const Folder& f) {
