@@ -60,18 +60,17 @@ void register_file_routes(crow::SimpleApp& app, Database& db, FileStore& store) 
             auto it = part.headers.find("Content-Disposition");
             if (it == part.headers.end()) continue;
 
-            std::string disp = it->second.value;
-            if (disp.find("name=\"folder_id\"") != std::string::npos) {
+            auto& params = it->second.params;
+            auto name_it = params.find("name");
+            if (name_it == params.end()) continue;
+
+            if (name_it->second == "folder_id") {
                 folder_id = part.body;
-            } else if (disp.find("name=\"file\"") != std::string::npos ||
-                       disp.find("filename=") != std::string::npos) {
+            } else if (name_it->second == "file") {
                 file_data = part.body;
-                // Extract filename
-                auto fn_pos = disp.find("filename=\"");
-                if (fn_pos != std::string::npos) {
-                    fn_pos += 10;
-                    auto fn_end = disp.find('"', fn_pos);
-                    file_name = disp.substr(fn_pos, fn_end - fn_pos);
+                auto fn_it = params.find("filename");
+                if (fn_it != params.end()) {
+                    file_name = fn_it->second;
                 }
             }
         }

@@ -162,7 +162,7 @@ std::vector<Folder> Database::get_subfolders(const std::string& parent_id) {
     std::vector<Folder> result;
     sqlite3_stmt* stmt = nullptr;
     if (parent_id.empty()) {
-        stmt = prepare("SELECT id, name, parent_id, creator, created_at FROM folders WHERE parent_id IS NULL ORDER BY name");
+        stmt = prepare("SELECT id, name, parent_id, creator, created_at FROM folders WHERE parent_id IS NULL AND id != '' ORDER BY name");
     } else {
         stmt = prepare("SELECT id, name, parent_id, creator, created_at FROM folders WHERE parent_id = ? ORDER BY name");
     }

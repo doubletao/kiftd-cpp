@@ -58,6 +58,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Ensure root folder exists
+    if (db.get_folder("").id.empty()) {
+        Folder root;
+        root.id = "";
+        root.name = "ROOT";
+        root.parent_id = "";
+        root.creator = "system";
+        db.create_folder(root);
+    }
+
     // Initialize admin account
     Auth auth(db);
     if (!auth.init_admin(cfg.admin_user, cfg.admin_pass)) {
