@@ -1,0 +1,6 @@
+{
+  "port": 8080,
+  "data_dir": "data",
+  "admin_user": "admin",
+  "admin_pass": "admin"
+}

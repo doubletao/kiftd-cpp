@@ -1,0 +1,29 @@
+# Build
+build/
+cmake-build-*/
+
+# Runtime data
+data/kiftd.db*
+data/files/
+
+# Third party (downloaded during build)
+third_party/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeSettings.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+web/node_modules/
+web/dist/
+
+# Temp
+*.tmp
+/tmp/
