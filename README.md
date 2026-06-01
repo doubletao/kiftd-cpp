@@ -21,12 +21,12 @@ A lightweight file server written in C++ with SQLite, inspired by [kiftd](https:
 - Git (for CMake FetchContent to download dependencies)
 - Node.js 18+ (for frontend build)
 
-All C++ dependencies (Crow, nlohmann/json, SQLite3) are automatically fetched by CMake during the first build - no package manager needed.
+All C++ dependencies are included in `third_party/` (Crow, Asio, nlohmann/json, SQLite3) - no network access needed to build.
 
 ### Steps
 
 ```bash
-# Build backend
+# Build backend (no network required)
 cd kiftd-cpp
 cmake -B build -S .
 cmake --build build --config Release
