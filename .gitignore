@@ -6,8 +6,9 @@ cmake-build-*/
 data/kiftd.db*
 data/files/
 
-# Third party (downloaded during build)
-third_party/
+# Third party build artifacts
+third_party/sqlite3/sqlite3.o
+third_party/sqlite3/sqlite3.lo
 
 # IDE
 .vs/
