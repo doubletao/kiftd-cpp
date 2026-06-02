@@ -1,7 +1,8 @@
 #include "controllers/auth_controller.h"
 #include <nlohmann/json.hpp>
-#include <unordered_map>
+#include <map>
 #include <chrono>
+#include <mutex>
 
 namespace kiftd {
 
@@ -9,14 +10,17 @@ static constexpr int MAX_RECORDS = 10000;
 
 struct FailRecord {
     int count = 0;
-    std::chrono::steady_clock::time_point lock_until;
+    std::chrono::steady_clock::time_point lock_until = std::chrono::steady_clock::time_point::max();
 };
 
-static void cleanup_fail_map(std::unordered_map<std::string, FailRecord>& m) {
+static std::map<std::string, FailRecord> g_fail_map;
+static std::mutex g_fail_map_mutex;
+
+static void cleanup_fail_map() {
     auto now = std::chrono::steady_clock::now();
-    for (auto it = m.begin(); it != m.end(); ) {
-        if (it->second.lock_until < now && it->second.count > 0) {
-            it = m.erase(it);
+    for (auto it = g_fail_map.begin(); it != g_fail_map.end(); ) {
+        if (it->second.lock_until <= now) {
+            it = g_fail_map.erase(it);
         } else {
             ++it;
         }
@@ -24,8 +28,6 @@ static void cleanup_fail_map(std::unordered_map<std::string, FailRecord>& m) {
 }
 
 void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const Config& cfg) {
-
-    static std::unordered_map<std::string, FailRecord> fail_map;
 
     // POST /api/auth/login
     CROW_ROUTE(app, "/api/auth/login")
@@ -36,18 +38,21 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
             return crow::response(400, R"({"error":"invalid request"})");
         }
 
+        std::string ip = req.remote_ip_address;
+        auto now = std::chrono::steady_clock::now();
+
+        std::lock_guard<std::mutex> lock(g_fail_map_mutex);
+
         // Memory safety: lazy cleanup + size cap
-        if (fail_map.size() > MAX_RECORDS) {
-            cleanup_fail_map(fail_map);
-            if (fail_map.size() > MAX_RECORDS) {
-                fail_map.clear();
+        if (g_fail_map.size() > MAX_RECORDS) {
+            cleanup_fail_map();
+            if (g_fail_map.size() > MAX_RECORDS) {
+                g_fail_map.clear();
             }
         }
 
         // Rate limit check
-        std::string ip = req.remote_ip_address;
-        auto now = std::chrono::steady_clock::now();
-        auto& rec = fail_map[ip];
+        FailRecord& rec = g_fail_map[ip];
         if (rec.count >= cfg.max_attempts && rec.lock_until > now) {
             auto remaining = std::chrono::duration_cast<std::chrono::seconds>(rec.lock_until - now).count();
             nlohmann::json j;
@@ -60,7 +65,6 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
         std::string password = body["password"].get<std::string>();
 
         if (!auth.login(username, password)) {
-            // Reset if lockout expired
             if (rec.lock_until < now) {
                 rec.count = 0;
             }
@@ -71,8 +75,7 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
             return crow::response(401, R"({"error":"invalid credentials"})");
         }
 
-        // Success: clear fail record
-        fail_map.erase(ip);
+        g_fail_map.erase(ip);
 
         crow::response res(200, R"({"ok":true})");
         res.add_header("Set-Cookie", "kiftd_user=" + username + "; Path=/; HttpOnly; SameSite=Lax");
