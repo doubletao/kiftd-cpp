@@ -40,8 +40,14 @@ void Config::load(const std::string& config_path) {
             data_dir = j["data_dir"].get<std::string>();
             apply_defaults();
         }
-        if (j.contains("admin_user")) admin_user = j["admin_user"].get<std::string>();
-        if (j.contains("admin_pass")) admin_pass = j["admin_pass"].get<std::string>();
+        if (j.contains("accounts") && j["accounts"].is_array()) {
+            accounts.clear();
+            for (auto& a : j["accounts"]) {
+                if (a.contains("username") && a.contains("password")) {
+                    accounts.push_back({a["username"].get<std::string>(), a["password"].get<std::string>()});
+                }
+            }
+        }
         if (j.contains("max_attempts")) max_attempts = j["max_attempts"].get<int>();
         if (j.contains("lockout_seconds")) lockout_seconds = j["lockout_seconds"].get<int>();
     } catch (...) {

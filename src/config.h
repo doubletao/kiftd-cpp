@@ -1,7 +1,13 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace kiftd {
+
+struct Account {
+    std::string username;
+    std::string password;
+};
 
 struct Config {
     int port = 8081;
@@ -9,8 +15,7 @@ struct Config {
     std::string db_path;        // data_dir + "/kiftd.db"
     std::string files_dir;      // data_dir + "/files"
     std::string web_dir;        // "web/dist"
-    std::string admin_user = "admin";
-    std::string admin_pass = "admin";
+    std::vector<Account> accounts = {{"admin", "admin"}};
     int max_attempts = 5;
     int lockout_seconds = 60;
 

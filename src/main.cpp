@@ -68,13 +68,15 @@ int main(int argc, char* argv[]) {
         db.create_folder(root);
     }
 
-    // Initialize admin account
+    // Initialize accounts
     Auth auth(db);
-    if (!auth.init_admin(cfg.admin_user, cfg.admin_pass)) {
-        std::cerr << "Failed to create admin account" << std::endl;
-        return 1;
+    for (auto& acc : cfg.accounts) {
+        if (!auth.init_admin(acc.username, acc.password)) {
+            std::cerr << "Failed to create account: " << acc.username << std::endl;
+            return 1;
+        }
+        std::cout << "Account ready: " << acc.username << std::endl;
     }
-    std::cout << "Admin account ready: " << cfg.admin_user << std::endl;
 
     // Initialize file store
     FileStore file_store(cfg.files_dir);
