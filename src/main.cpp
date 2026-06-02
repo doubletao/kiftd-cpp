@@ -83,7 +83,7 @@ int main(int argc, char* argv[]) {
     crow::SimpleApp app;
 
     // Register API routes
-    register_auth_routes(app, db, auth);
+    register_auth_routes(app, db, auth, cfg);
     register_folder_routes(app, db);
     register_file_routes(app, db, file_store);
     register_share_routes(app, db, file_store);

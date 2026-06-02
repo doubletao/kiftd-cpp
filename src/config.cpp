@@ -42,6 +42,8 @@ void Config::load(const std::string& config_path) {
         }
         if (j.contains("admin_user")) admin_user = j["admin_user"].get<std::string>();
         if (j.contains("admin_pass")) admin_pass = j["admin_pass"].get<std::string>();
+        if (j.contains("max_attempts")) max_attempts = j["max_attempts"].get<int>();
+        if (j.contains("lockout_seconds")) lockout_seconds = j["lockout_seconds"].get<int>();
     } catch (...) {
         // Config parse error, use defaults
     }

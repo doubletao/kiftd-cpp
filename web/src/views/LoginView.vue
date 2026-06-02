@@ -6,8 +6,8 @@
       <form @submit.prevent="handleLogin">
         <input v-model="username" type="text" placeholder="Username" required autofocus />
         <input v-model="password" type="password" placeholder="Password" required />
-        <button type="submit" :disabled="loading">
-          {{ loading ? 'Logging in...' : 'Login' }}
+        <button type="submit" :disabled="loading || lockCountdown > 0">
+          {{ lockCountdown > 0 ? `Locked (${lockCountdown}s)` : loading ? 'Logging in...' : 'Login' }}
         </button>
         <p v-if="error" class="error">{{ error }}</p>
       </form>
@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 
@@ -27,6 +27,23 @@ const username = ref('')
 const password = ref('')
 const loading = ref(false)
 const error = ref('')
+const lockCountdown = ref(0)
+let countdownTimer: ReturnType<typeof setInterval> | null = null
+
+function startCountdown(seconds: number) {
+  lockCountdown.value = seconds
+  countdownTimer = setInterval(() => {
+    lockCountdown.value--
+    if (lockCountdown.value <= 0) {
+      clearInterval(countdownTimer!)
+      countdownTimer = null
+    }
+  }, 1000)
+}
+
+onUnmounted(() => {
+  if (countdownTimer) clearInterval(countdownTimer)
+})
 
 async function handleLogin() {
   loading.value = true
@@ -35,7 +52,13 @@ async function handleLogin() {
     await userStore.login(username.value, password.value)
     router.push('/')
   } catch (e: any) {
-    error.value = e.response?.data?.error || 'Login failed'
+    if (e.response?.status === 429) {
+      const retryAfter = e.response.data.retry_after || 60
+      startCountdown(retryAfter)
+      error.value = `Too many attempts, please retry after ${retryAfter}s`
+    } else {
+      error.value = e.response?.data?.error || 'Login failed'
+    }
   } finally {
     loading.value = false
   }

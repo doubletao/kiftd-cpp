@@ -11,6 +11,8 @@ struct Config {
     std::string web_dir;        // "web/dist"
     std::string admin_user = "admin";
     std::string admin_pass = "admin";
+    int max_attempts = 5;
+    int lockout_seconds = 60;
 
     static Config& instance();
     void load(const std::string& config_path);
