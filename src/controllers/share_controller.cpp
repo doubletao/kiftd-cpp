@@ -21,12 +21,25 @@ static std::string get_content_type(const std::string& filename) {
     if (dot == std::string::npos) return "application/octet-stream";
     std::string ext = filename.substr(dot + 1);
     for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-    if (ext == "txt") return "text/plain; charset=utf-8";
+    if (ext == "txt" || ext == "text") return "text/plain; charset=utf-8";
+    if (ext == "html" || ext == "htm") return "text/html; charset=utf-8";
+    if (ext == "css") return "text/css";
+    if (ext == "js") return "application/javascript";
+    if (ext == "json") return "application/json";
     if (ext == "png") return "image/png";
     if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
     if (ext == "gif") return "image/gif";
+    if (ext == "svg") return "image/svg+xml";
+    if (ext == "ico") return "image/x-icon";
     if (ext == "pdf") return "application/pdf";
     if (ext == "zip") return "application/zip";
+    if (ext == "mp3") return "audio/mpeg";
+    if (ext == "wav") return "audio/wav";
+    if (ext == "ogg") return "audio/ogg";
+    if (ext == "flac") return "audio/flac";
+    if (ext == "aac") return "audio/aac";
+    if (ext == "webm") return "video/webm";
+    if (ext == "mp4") return "video/mp4";
     return "application/octet-stream";
 }
 

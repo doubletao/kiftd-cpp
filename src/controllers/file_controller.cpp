@@ -37,6 +37,11 @@ static std::string get_content_type(const std::string& filename) {
     if (ext == "pdf") return "application/pdf";
     if (ext == "zip") return "application/zip";
     if (ext == "mp3") return "audio/mpeg";
+    if (ext == "wav") return "audio/wav";
+    if (ext == "ogg") return "audio/ogg";
+    if (ext == "flac") return "audio/flac";
+    if (ext == "aac") return "audio/aac";
+    if (ext == "webm") return "video/webm";
     if (ext == "mp4") return "video/mp4";
     return "application/octet-stream";
 }
@@ -143,9 +148,10 @@ void register_file_routes(crow::SimpleApp& app, Database& db, FileStore& store) 
         if (!fs::exists(path)) return crow::response(404, R"({"error":"file missing"})");
 
         std::string ct = get_content_type(file.name);
-        // Only allow preview for text and images
+        // Only allow preview for text, images and audio
         if (ct.find("text/") == std::string::npos &&
             ct.find("image/") == std::string::npos &&
+            ct.find("audio/") == std::string::npos &&
             ct != "application/json" &&
             ct != "application/javascript") {
             return crow::response(403, R"({"error":"preview not supported"})");

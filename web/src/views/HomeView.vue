@@ -85,6 +85,7 @@
             <td>{{ file.creator }}</td>
             <td>{{ file.created_at }}</td>
             <td class="actions-cell">
+              <button v-if="canPreview(file.name)" class="btn-sm" @click="openPreview(file.id, file.name)">Preview</button>
               <button class="btn-sm" @click="download(file.id, file.name)">Download</button>
               <button class="btn-sm" @click="shareFile(file.id)">Share</button>
               <button class="btn-sm" @click="renameFilePrompt(file)">Rename</button>
@@ -97,6 +98,14 @@
         </tbody>
       </table>
     </div>
+
+    <!-- File Preview -->
+    <FilePreview
+      :visible="showPreview"
+      :file-id="previewFileId"
+      :file-name="previewFileName"
+      @close="showPreview = false"
+    />
   </div>
 </template>
 
@@ -105,6 +114,7 @@ import { ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { getFolder, createFolder, renameFolder, deleteFolder, uploadFile, downloadFile, renameFile, deleteFile, createShare } from '../api'
+import FilePreview from '../components/FilePreview.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -120,6 +130,10 @@ const newFolderName = ref('')
 
 const uploading = ref(false)
 const uploadProgress = ref(0)
+
+const showPreview = ref(false)
+const previewFileId = ref('')
+const previewFileName = ref('')
 
 const currentFolderId = ref('root')
 
@@ -183,6 +197,20 @@ async function handleUpload(e: Event) {
 
 function download(id: string, name: string) {
   downloadFile(id, name)
+}
+
+const previewExts = ['png','jpg','jpeg','gif','svg','ico','bmp','webp','mp3','wav','ogg','flac','aac','txt','text','json','js','css','html','htm','xml','md','csv','log','ini','conf','yml','yaml','sh','bat','py','java','c','cpp','h','hpp']
+
+function canPreview(name: string): boolean {
+  const dot = name.lastIndexOf('.')
+  if (dot < 0) return false
+  return previewExts.includes(name.substring(dot + 1).toLowerCase())
+}
+
+function openPreview(id: string, name: string) {
+  previewFileId.value = id
+  previewFileName.value = name
+  showPreview.value = true
 }
 
 async function shareFile(fileId: string) {

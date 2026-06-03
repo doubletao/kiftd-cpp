@@ -50,6 +50,8 @@ export const renameFile = (id: string, name: string) =>
 
 export const deleteFile = (id: string) => api.delete(`/files/${id}`)
 
+export const getPreviewUrl = (id: string) => `/api/files/${id}/preview`
+
 // Shares
 export const createShare = (fileId: string, expireAt?: string) =>
   api.post('/shares', { file_id: fileId, expire_at: expireAt || null })
