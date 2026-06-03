@@ -59,3 +59,18 @@ export const createShare = (fileId: string, expireAt?: string) =>
 export const getMyShares = () => api.get('/shares/mine')
 
 export const deleteShare = (id: string) => api.delete(`/shares/${id}`)
+
+// Transcode
+export const getTranscodeConfig = () => api.get('/config/transcode')
+
+export const probeFile = (id: string) => api.post(`/files/${id}/probe`)
+
+export const submitTranscode = (id: string, preset: string, audioIndex: number, subtitleIndex?: number, externalSubtitlePath?: string) =>
+  api.post(`/files/${id}/transcode`, { preset, audio_index: audioIndex, subtitle_index: subtitleIndex ?? -1, external_subtitle_path: externalSubtitlePath || '' })
+
+export const getTranscodeStatus = (id: string) => api.get(`/files/${id}/transcode/status`)
+
+export const deleteTranscode = (id: string) => api.delete(`/files/${id}/transcode`)
+
+export const getTranscodeStreamUrl = (id: string, preset?: string) =>
+  `/api/files/${id}/transcode/stream${preset ? '?preset=' + preset : ''}`

@@ -7,10 +7,12 @@
 #include "database.h"
 #include "auth.h"
 #include "filestore.h"
+#include "transcode_manager.h"
 #include "controllers/auth_controller.h"
 #include "controllers/folder_controller.h"
 #include "controllers/file_controller.h"
 #include "controllers/share_controller.h"
+#include "controllers/transcode_controller.h"
 
 namespace fs = std::filesystem;
 using namespace kiftd;
@@ -81,6 +83,14 @@ int main(int argc, char* argv[]) {
     // Initialize file store
     FileStore file_store(cfg.files_dir);
 
+    // Initialize transcode manager
+    TranscodeManager transcode_mgr(cfg, cfg.files_dir);
+    if (!cfg.ffmpeg_path.empty()) {
+        transcode_mgr.start();
+        std::cout << "Transcode enabled: " << cfg.ffmpeg_path
+                  << " (concurrency: " << cfg.transcode_concurrency << ")" << std::endl;
+    }
+
     // Setup Crow app
     crow::SimpleApp app;
 
@@ -89,6 +99,7 @@ int main(int argc, char* argv[]) {
     register_folder_routes(app, db);
     register_file_routes(app, db, file_store);
     register_share_routes(app, db, file_store);
+    register_transcode_routes(app, db, file_store, transcode_mgr, cfg);
 
     // Static file serving + SPA fallback
     CROW_ROUTE(app, "/<path>")

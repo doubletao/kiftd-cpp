@@ -6,5 +6,13 @@
       "username": "admin",
       "password": "admin"
     }
-  ]
+  ],
+  "ffmpeg_path": "",
+  "transcode_dir": "data/transcode",
+  "transcode_concurrency": 2,
+  "transcode_presets": {
+    "fast":    { "resolution": 480, "crf": 30, "preset": "veryfast" },
+    "medium":  { "resolution": 720, "crf": 27, "preset": "fast" },
+    "high":    { "resolution": 0,   "crf": 25, "preset": "fast" }
+  }
 }

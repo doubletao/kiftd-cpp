@@ -90,6 +90,15 @@
             <td>{{ file.created_at }}</td>
             <td class="actions-cell">
               <button v-if="canPreview(file.name)" class="btn-sm" @click="openPreview(file.id, file.name)">Preview</button>
+              <button v-if="canPlayDirect(file.name)" class="btn-sm btn-play" @click="openVideoPreview(file.id, file.name, false)">Play</button>
+              <button v-if="canTranscode(file.name) && getTranscodeStatusForFile(file.id) === 'none'" class="btn-sm btn-transcode" @click="openTranscodeDialog(file)">Transcode</button>
+              <button v-if="getTranscodeStatusForFile(file.id) === 'pending'" class="btn-sm" disabled>Queued</button>
+              <button v-if="getTranscodeStatusForFile(file.id) === 'transcoding'" class="btn-sm btn-transcoding" disabled>Transcoding...</button>
+              <template v-if="getTranscodeStatusForFile(file.id) === 'done'">
+                <button class="btn-sm btn-play" @click="openVideoPreview(file.id, file.name, true)">Play</button>
+                <button class="btn-sm btn-danger" @click="removeTranscode(file.id)">Del Cache</button>
+              </template>
+              <button v-if="getTranscodeStatusForFile(file.id) === 'failed'" class="btn-sm btn-danger" @click="openTranscodeDialog(file)">Failed</button>
               <button class="btn-sm" @click="download(file.id, file.name)">Download</button>
               <button class="btn-sm" @click="shareFile(file.id)">Share</button>
               <button class="btn-sm" @click="renameFilePrompt(file)">Rename</button>
@@ -109,8 +118,19 @@
       :file-id="previewFileId"
       :file-name="previewFileName"
       :image-files="imageFiles"
+      :transcoded="previewTranscoded"
       @close="showPreview = false"
       @navigate="onPreviewNavigate"
+    />
+
+    <!-- Transcode Dialog -->
+    <TranscodeDialog
+      :visible="showTranscodeDialog"
+      :file-id="transcodeFileId"
+      :file-name="transcodeFileName"
+      :presets="transcodePresets"
+      @close="showTranscodeDialog = false"
+      @submit="handleTranscodeSubmit"
     />
 
     <!-- Drop overlay -->
@@ -124,11 +144,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
-import { getFolder, createFolder, renameFolder, deleteFolder, uploadFile, downloadFile, renameFile, deleteFile, createShare } from '../api'
+import { getFolder, createFolder, renameFolder, deleteFolder, uploadFile, downloadFile, renameFile, deleteFile, createShare, getTranscodeConfig, submitTranscode, getTranscodeStatus, deleteTranscode } from '../api'
 import FilePreview from '../components/FilePreview.vue'
+import TranscodeDialog from '../components/TranscodeDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -148,6 +169,16 @@ const uploadProgress = ref(0)
 const showPreview = ref(false)
 const previewFileId = ref('')
 const previewFileName = ref('')
+const previewTranscoded = ref(false)
+
+// Transcode
+const transcodeEnabled = ref(false)
+const transcodePresets = ref<Record<string, { resolution: number; crf: number; preset: string }>>({})
+const transcodeStatuses = ref<Record<string, string>>({})  // file_id -> status
+const showTranscodeDialog = ref(false)
+const transcodeFileId = ref('')
+const transcodeFileName = ref('')
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const imageExts = ['png','jpg','jpeg','gif','svg','ico','bmp','webp']
 
@@ -331,6 +362,151 @@ function formatSize(bytes: number): string {
   if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB'
   return (bytes / 1073741824).toFixed(1) + ' GB'
 }
+
+// Video extensions that can be transcoded
+const videoExts = ['mkv','avi','flv','wmv','mov','ts','m4v','rmvb','rm','3gp','f4v','vob']
+const directPlayExts = ['mp4']
+
+function canTranscode(name: string): boolean {
+  if (!transcodeEnabled.value) return false
+  const dot = name.lastIndexOf('.')
+  if (dot < 0) return false
+  return videoExts.includes(name.substring(dot + 1).toLowerCase())
+}
+
+function canPlayDirect(name: string): boolean {
+  const dot = name.lastIndexOf('.')
+  if (dot < 0) return false
+  return directPlayExts.includes(name.substring(dot + 1).toLowerCase())
+}
+
+function getTranscodeStatusForFile(fileId: string): string {
+  return transcodeStatuses.value[fileId] || 'none'
+}
+
+function openTranscodeDialog(file: any) {
+  transcodeFileId.value = file.id
+  transcodeFileName.value = file.name
+  showTranscodeDialog.value = true
+}
+
+function openVideoPreview(fileId: string, fileName: string, transcoded: boolean) {
+  previewFileId.value = fileId
+  previewFileName.value = fileName
+  previewTranscoded.value = transcoded
+  showPreview.value = true
+}
+
+async function handleTranscodeSubmit(preset: string, audioIndex: number, subtitleIndex: number, externalSubtitlePath: string) {
+  try {
+    await submitTranscode(transcodeFileId.value, preset, audioIndex, subtitleIndex, externalSubtitlePath)
+    transcodeStatuses.value[transcodeFileId.value] = 'pending'
+    showTranscodeDialog.value = false
+    startPolling()
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Transcode submit failed')
+  }
+}
+
+async function removeTranscode(fileId: string) {
+  try {
+    await deleteTranscode(fileId)
+    delete transcodeStatuses.value[fileId]
+    transcodeStatuses.value = { ...transcodeStatuses.value }
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Delete failed')
+  }
+}
+
+function startPolling() {
+  if (pollTimer) return
+  pollTimer = setInterval(async () => {
+    const activeIds = Object.entries(transcodeStatuses.value)
+      .filter(([_, s]) => s === 'pending' || s === 'transcoding')
+      .map(([id]) => id)
+
+    if (activeIds.length === 0) {
+      stopPolling()
+      return
+    }
+
+    for (const id of activeIds) {
+      try {
+        const res = await getTranscodeStatus(id)
+        const tasks = res.data
+        if (Array.isArray(tasks) && tasks.length > 0) {
+          // Find the best status (done > transcoding > pending > failed)
+          let best = 'none'
+          for (const t of tasks) {
+            if (t.status === 'done') { best = 'done'; break }
+            if (t.status === 'transcoding') best = 'transcoding'
+            else if (t.status === 'pending' && best === 'none') best = 'pending'
+            else if (t.status === 'failed' && best === 'none') best = 'failed'
+          }
+          transcodeStatuses.value[id] = best
+        }
+      } catch {
+        // ignore
+      }
+    }
+    transcodeStatuses.value = { ...transcodeStatuses.value }
+  }, 3000)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+// Load transcode config on mount
+onMounted(async () => {
+  try {
+    const res = await getTranscodeConfig()
+    transcodeEnabled.value = res.data.enabled
+    if (res.data.presets) {
+      transcodePresets.value = res.data.presets
+    }
+  } catch {
+    // ignore — transcode not available
+  }
+})
+
+// Load transcode statuses when folder changes
+watch(() => files.value, async (newFiles) => {
+  if (!transcodeEnabled.value || !newFiles.length) return
+  for (const f of newFiles) {
+    if (videoExts.includes(getExt(f.name))) {
+      try {
+        const res = await getTranscodeStatus(f.id)
+        const tasks = res.data
+        if (Array.isArray(tasks) && tasks.length > 0) {
+          let best = 'none'
+          for (const t of tasks) {
+            if (t.status === 'done') { best = 'done'; break }
+            if (t.status === 'transcoding') best = 'transcoding'
+            else if (t.status === 'pending' && best === 'none') best = 'pending'
+            else if (t.status === 'failed' && best === 'none') best = 'failed'
+          }
+          if (best !== 'none') {
+            transcodeStatuses.value[f.id] = best
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  // Start polling if there are active tasks
+  const hasActive = Object.values(transcodeStatuses.value).some(s => s === 'pending' || s === 'transcoding')
+  if (hasActive) startPolling()
+}, { immediate: false })
+
+function getExt(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot >= 0 ? name.substring(dot + 1).toLowerCase() : ''
+}
+
+onUnmounted(() => stopPolling())
 </script>
 
 <style scoped>
@@ -472,6 +648,24 @@ function formatSize(bytes: number): string {
 }
 .btn-danger:hover {
   background: #fde8e8;
+}
+.btn-play {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+.btn-play:hover {
+  background: #c8e6c9;
+}
+.btn-transcode {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+.btn-transcode:hover {
+  background: #bbdefb;
+}
+.btn-transcoding {
+  background: #fff3e0;
+  color: #e65100;
 }
 .empty {
   text-align: center;

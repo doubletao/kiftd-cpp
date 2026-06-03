@@ -34,10 +34,12 @@ add_executable(kiftd
     src/database.cpp
     src/auth.cpp
     src/filestore.cpp
+    src/transcode_manager.cpp
     src/controllers/auth_controller.cpp
     src/controllers/folder_controller.cpp
     src/controllers/file_controller.cpp
     src/controllers/share_controller.cpp
+    src/controllers/transcode_controller.cpp
     src/utils/sha256.cpp
     src/utils/uuid.cpp
 )

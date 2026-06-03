@@ -33,6 +33,10 @@
         <div v-else-if="isAudio" class="preview-audio">
           <audio :src="previewUrl" controls autoplay></audio>
         </div>
+        <!-- Video -->
+        <div v-else-if="isVideo" class="preview-video">
+          <video :src="videoUrl" controls autoplay></video>
+        </div>
         <!-- Text -->
         <pre v-else-if="isText" class="preview-text">{{ textContent }}</pre>
         <!-- Unsupported -->
@@ -46,7 +50,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { getPreviewUrl } from '../api'
+import { getPreviewUrl, getTranscodeStreamUrl } from '../api'
 
 interface ImageFile {
   id: string
@@ -58,6 +62,7 @@ const props = defineProps<{
   fileId: string
   fileName: string
   imageFiles?: ImageFile[]
+  transcoded?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -99,9 +104,11 @@ const ext = computed(() => {
 
 const isImage = computed(() => ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'bmp', 'webp'].includes(ext.value))
 const isAudio = computed(() => ['mp3', 'wav', 'ogg', 'flac', 'aac'].includes(ext.value))
+const isVideo = computed(() => props.transcoded || ['mp4'].includes(ext.value))
 const isText = computed(() => ['txt', 'text', 'json', 'js', 'css', 'html', 'htm', 'xml', 'md', 'csv', 'log', 'ini', 'conf', 'yml', 'yaml', 'sh', 'bat', 'py', 'java', 'c', 'cpp', 'h', 'hpp'].includes(ext.value))
 
 const previewUrl = computed(() => getPreviewUrl(props.fileId))
+const videoUrl = computed(() => props.transcoded ? getTranscodeStreamUrl(props.fileId) : getPreviewUrl(props.fileId))
 
 // Zoom methods
 function zoomIn() {
@@ -369,6 +376,16 @@ function close() {
 .preview-audio audio {
   width: 80%;
   min-width: 300px;
+}
+.preview-video {
+  width: 100%;
+  text-align: center;
+  padding: 1rem 0;
+}
+.preview-video video {
+  max-width: 100%;
+  max-height: 70vh;
+  background: #000;
 }
 .preview-text {
   width: 100%;
