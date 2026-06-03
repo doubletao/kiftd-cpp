@@ -1,5 +1,9 @@
 <template>
-  <div class="app-layout">
+  <div class="app-layout"
+       @dragenter.prevent="onDragEnter"
+       @dragover.prevent="onDragOver"
+       @dragleave.prevent="onDragLeave"
+       @drop.prevent="onDrop">
     <!-- Header -->
     <header class="header">
       <div class="header-left">
@@ -108,6 +112,14 @@
       @close="showPreview = false"
       @navigate="onPreviewNavigate"
     />
+
+    <!-- Drop overlay -->
+    <div v-if="dragging" class="drop-overlay">
+      <div class="drop-hint">
+        <span class="drop-icon">&#128229;</span>
+        <span>Drop files here to upload</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -147,6 +159,46 @@ const imageFiles = computed(() =>
 )
 
 const currentFolderId = ref('root')
+
+// Drag & drop
+const dragging = ref(false)
+let dragCounter = 0
+
+function onDragEnter() {
+  dragCounter++
+  dragging.value = true
+}
+
+function onDragOver(e: DragEvent) {
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onDragLeave() {
+  dragCounter--
+  if (dragCounter <= 0) {
+    dragging.value = false
+    dragCounter = 0
+  }
+}
+
+async function onDrop(e: DragEvent) {
+  dragging.value = false
+  dragCounter = 0
+
+  const items = e.dataTransfer?.items
+  if (!items?.length) return
+
+  const fileList: File[] = []
+  for (let i = 0; i < items.length; i++) {
+    const entry = items[i].webkitGetAsEntry?.()
+    if (entry && entry.isFile) {
+      fileList.push(items[i].getAsFile()!)
+    }
+  }
+
+  if (!fileList.length) return
+  await uploadFiles(fileList)
+}
 
 async function loadFolder(id: string) {
   loading.value = true
@@ -189,11 +241,17 @@ async function createNewFolder() {
 async function handleUpload(e: Event) {
   const input = e.target as HTMLInputElement
   if (!input.files?.length) return
+  await uploadFiles(Array.from(input.files))
+  input.value = ''
+}
+
+async function uploadFiles(fileList: File[]) {
+  if (!fileList.length) return
   uploading.value = true
   uploadProgress.value = 0
   try {
-    for (let i = 0; i < input.files.length; i++) {
-      await uploadFile(currentFolderId.value, input.files[i], (p) => {
+    for (let i = 0; i < fileList.length; i++) {
+      await uploadFile(currentFolderId.value, fileList[i], (p) => {
         uploadProgress.value = p
       })
     }
@@ -202,7 +260,6 @@ async function handleUpload(e: Event) {
     alert(e.response?.data?.error || 'Upload failed')
   } finally {
     uploading.value = false
-    input.value = ''
   }
 }
 
@@ -471,5 +528,32 @@ function formatSize(bytes: number): string {
   height: 100%;
   background: #667eea;
   transition: width 0.2s;
+}
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(102, 126, 234, 0.15);
+  border: 3px dashed #667eea;
+  z-index: 90;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+.drop-hint {
+  background: white;
+  padding: 2rem 3rem;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.1rem;
+  color: #667eea;
+  font-weight: 500;
+}
+.drop-icon {
+  font-size: 2.5rem;
 }
 </style>
