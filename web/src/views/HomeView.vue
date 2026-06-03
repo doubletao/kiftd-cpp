@@ -104,13 +104,15 @@
       :visible="showPreview"
       :file-id="previewFileId"
       :file-name="previewFileName"
+      :image-files="imageFiles"
       @close="showPreview = false"
+      @navigate="onPreviewNavigate"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { getFolder, createFolder, renameFolder, deleteFolder, uploadFile, downloadFile, renameFile, deleteFile, createShare } from '../api'
@@ -134,6 +136,15 @@ const uploadProgress = ref(0)
 const showPreview = ref(false)
 const previewFileId = ref('')
 const previewFileName = ref('')
+
+const imageExts = ['png','jpg','jpeg','gif','svg','ico','bmp','webp']
+
+const imageFiles = computed(() =>
+  files.value.filter(f => {
+    const dot = f.name.lastIndexOf('.')
+    return dot >= 0 && imageExts.includes(f.name.substring(dot + 1).toLowerCase())
+  })
+)
 
 const currentFolderId = ref('root')
 
@@ -211,6 +222,11 @@ function openPreview(id: string, name: string) {
   previewFileId.value = id
   previewFileName.value = name
   showPreview.value = true
+}
+
+function onPreviewNavigate(id: string, name: string) {
+  previewFileId.value = id
+  previewFileName.value = name
 }
 
 async function shareFile(fileId: string) {
