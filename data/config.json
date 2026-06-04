@@ -14,5 +14,12 @@
     "fast":    { "resolution": 480, "crf": 30, "preset": "veryfast" },
     "medium":  { "resolution": 720, "crf": 27, "preset": "fast" },
     "high":    { "resolution": 0,   "crf": 25, "preset": "fast" }
+  },
+  "transcode_profile": "cpu",
+  "transcode_profiles": {
+    "cpu":   { "name": "CPU (libx264)",  "command": "\"{ffmpeg}\" -y -i \"{input}\" {vf_args} -map 0:v:0 {audio_map} -c:v libx264 -crf {crf} -preset {preset} -c:a aac -b:a 128k -movflags +faststart \"{output}\"" },
+    "nvenc": { "name": "NVIDIA NVENC",   "command": "\"{ffmpeg}\" -y -init_hw_device cuda=hw:0 -i \"{input}\" {vf_args} -map 0:v:0 {audio_map} -c:v h264_nvenc -cq {crf} -preset {preset} -c:a aac -b:a 128k -movflags +faststart \"{output}\"" },
+    "qsv":   { "name": "Intel QSV",     "command": "\"{ffmpeg}\" -y -init_hw_device qsv=hw:0 -i \"{input}\" {vf_args} -map 0:v:0 {audio_map} -c:v h264_qsv -global_quality {crf} -preset {preset} -c:a aac -b:a 128k -movflags +faststart \"{output}\"" },
+    "amf":   { "name": "AMD AMF",       "command": "\"{ffmpeg}\" -y -init_hw_device d3d11va=hw:0 -i \"{input}\" {vf_args} -map 0:v:0 {audio_map} -c:v h264_amf -qp_i {crf} -qp_p {crf} -quality {preset} -c:a aac -b:a 128k -movflags +faststart \"{output}\"" }
   }
 }

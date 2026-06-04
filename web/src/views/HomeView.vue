@@ -129,6 +129,7 @@
       :file-id="transcodeFileId"
       :file-name="transcodeFileName"
       :presets="transcodePresets"
+      :profile-name="transcodeProfileName"
       @close="showTranscodeDialog = false"
       @submit="handleTranscodeSubmit"
     />
@@ -174,6 +175,7 @@ const previewTranscoded = ref(false)
 // Transcode
 const transcodeEnabled = ref(false)
 const transcodePresets = ref<Record<string, { resolution: number; crf: number; preset: string }>>({})
+const transcodeProfileName = ref('')
 const transcodeStatuses = ref<Record<string, string>>({})  // file_id -> status
 const showTranscodeDialog = ref(false)
 const transcodeFileId = ref('')
@@ -240,6 +242,10 @@ async function loadTranscodeConfig() {
     transcodeEnabled.value = res.data.enabled
     if (res.data.presets) {
       transcodePresets.value = res.data.presets
+    }
+    if (res.data.profile && res.data.profiles) {
+      const p = res.data.profiles[res.data.profile]
+      transcodeProfileName.value = p?.name || res.data.profile
     }
   } catch {
     // ignore — transcode not available

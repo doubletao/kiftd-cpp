@@ -1,6 +1,5 @@
 #include "transcode_manager.h"
 #include <filesystem>
-#include <sstream>
 #include <iostream>
 
 #ifdef _WIN32
@@ -189,6 +188,31 @@ void TranscodeManager::run_task(TranscodeTask& task) {
 #endif
 }
 
+static std::string escape_vf_path(const std::string& path) {
+    std::string escaped;
+    for (char c : path) {
+        if (c == '\\' || c == ':' || c == '\'' || c == '[' || c == ']') {
+            escaped += '\\';
+        }
+        escaped += c;
+    }
+    return escaped;
+}
+
+static std::string replace_all(std::string str, const std::string& from, const std::string& to) {
+    size_t pos = 0;
+    while ((pos = str.find(from, pos)) != std::string::npos) {
+        str.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+    return str;
+}
+
+// Detect if profile uses hardware encoding (needs hwdownload/hwupload for CPU filters)
+static bool is_hw_profile(const std::string& profile_name) {
+    return profile_name == "nvenc" || profile_name == "qsv" || profile_name == "amf";
+}
+
 std::string TranscodeManager::build_ffmpeg_cmd(const TranscodeTask& task) {
     auto it = cfg_.transcode_presets.find(task.preset);
     TranscodePreset preset;
@@ -196,56 +220,56 @@ std::string TranscodeManager::build_ffmpeg_cmd(const TranscodeTask& task) {
         preset = it->second;
     }
 
-    std::ostringstream cmd;
-    cmd << "\"" << cfg_.ffmpeg_path << "\""
-        << " -y -i \"" << task.input_path << "\"";
-
-    // Video filter chain
+    // Build video filter chain
     std::string vf;
     if (preset.resolution > 0) {
         vf += "scale=-2:" + std::to_string(preset.resolution);
     }
     if (!task.external_subtitle_path.empty()) {
-        std::string escaped;
-        for (char c : task.external_subtitle_path) {
-            if (c == '\\' || c == ':' || c == '\'' || c == '[' || c == ']') {
-                escaped += '\\';
-            }
-            escaped += c;
-        }
         if (!vf.empty()) vf += ",";
-        vf += "subtitles=" + escaped;
+        vf += "subtitles=" + escape_vf_path(task.external_subtitle_path);
     } else if (task.subtitle_index >= 0) {
-        std::string escaped;
-        for (char c : task.input_path) {
-            if (c == '\\' || c == ':' || c == '\'' || c == '[' || c == ']') {
-                escaped += '\\';
-            }
-            escaped += c;
-        }
         if (!vf.empty()) vf += ",";
-        vf += "subtitles=" + escaped + ":si=" + std::to_string(task.subtitle_index);
+        vf += "subtitles=" + escape_vf_path(task.input_path) + ":si=" + std::to_string(task.subtitle_index);
     }
 
-    if (!vf.empty()) {
-        cmd << " -vf \"" << vf << "\"";
+    // For hardware encoders with CPU filters, wrap with format conversion and hwupload
+    if (!vf.empty() && is_hw_profile(cfg_.transcode_profile)) {
+        std::string hw_pre = "format=nv12,";
+        std::string hw_post = ",hwupload";
+        vf = hw_pre + vf + hw_post;
     }
 
-    cmd << " -map 0:v:0";
+    std::string vf_args = vf.empty() ? "" : ("-vf \"" + vf + "\"");
+
+    // Build audio map
+    std::string audio_map;
     if (task.audio_index >= 0) {
-        cmd << " -map 0:a:" << task.audio_index;
+        audio_map = "-map 0:a:" + std::to_string(task.audio_index);
     } else {
-        cmd << " -map 0:a:0?";
+        audio_map = "-map 0:a:0?";
     }
 
-    cmd << " -c:v libx264"
-        << " -crf " << preset.crf
-        << " -preset " << preset.preset
-        << " -c:a aac -b:a 128k"
-        << " -movflags +faststart"
-        << " \"" << task.cache_path << "\"";
+    // Get profile template
+    auto pit = cfg_.transcode_profiles.find(cfg_.transcode_profile);
+    std::string cmd_template;
+    if (pit != cfg_.transcode_profiles.end()) {
+        cmd_template = pit->second.command;
+    } else {
+        cmd_template = "\"{ffmpeg}\" -y -i \"{input}\" {vf_args} -map 0:v:0 {audio_map} -c:v libx264 -crf {crf} -preset {preset} -c:a aac -b:a 128k -movflags +faststart \"{output}\"";
+    }
 
-    return cmd.str();
+    // Substitute placeholders
+    std::string cmd = cmd_template;
+    cmd = replace_all(cmd, "{ffmpeg}", cfg_.ffmpeg_path);
+    cmd = replace_all(cmd, "{input}", task.input_path);
+    cmd = replace_all(cmd, "{output}", task.cache_path);
+    cmd = replace_all(cmd, "{vf_args}", vf_args);
+    cmd = replace_all(cmd, "{audio_map}", audio_map);
+    cmd = replace_all(cmd, "{crf}", std::to_string(preset.crf));
+    cmd = replace_all(cmd, "{preset}", preset.preset);
+
+    return cmd;
 }
 
 } // namespace kiftd

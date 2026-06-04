@@ -91,6 +91,18 @@ void Config::load(const std::string& config_path) {
                 transcode_presets[key] = p;
             }
         }
+        if (j.contains("transcode_profile")) {
+            transcode_profile = j["transcode_profile"].get<std::string>();
+        }
+        if (j.contains("transcode_profiles") && j["transcode_profiles"].is_object()) {
+            transcode_profiles.clear();
+            for (auto& [key, val] : j["transcode_profiles"].items()) {
+                TranscodeProfile p;
+                if (val.contains("name")) p.name = val["name"].get<std::string>();
+                if (val.contains("command")) p.command = val["command"].get<std::string>();
+                transcode_profiles[key] = p;
+            }
+        }
 
         // Ensure transcode dir exists if ffmpeg is configured
         if (!ffmpeg_path.empty()) {

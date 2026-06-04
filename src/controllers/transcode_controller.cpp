@@ -179,6 +179,13 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
                 };
             }
             j["presets"] = presets;
+
+            j["profile"] = cfg.transcode_profile;
+            nlohmann::json profiles = nlohmann::json::object();
+            for (auto& [name, p] : cfg.transcode_profiles) {
+                profiles[name] = {{"name", p.name}};
+            }
+            j["profiles"] = profiles;
         }
         return crow::response(200, j.dump());
     });

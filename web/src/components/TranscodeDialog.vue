@@ -51,7 +51,7 @@
 
         <!-- Quality preset -->
         <div class="field-group">
-          <label class="field-label">Quality</label>
+          <label class="field-label">Quality <span v-if="profileName" class="encoder-tag">{{ profileName }}</span></label>
           <div class="preset-options">
             <label v-for="name in presetOrder" :key="name" class="preset-option"
                    :class="{ active: selectedPreset === name }">
@@ -101,6 +101,7 @@ const props = defineProps<{
   fileId: string
   fileName: string
   presets: Record<string, { resolution: number; crf: number; preset: string }>
+  profileName?: string
 }>()
 
 const emit = defineEmits<{
@@ -366,4 +367,10 @@ function close() {
 .btn:hover { background: #5a6fd6; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: #667eea; }
+.encoder-tag {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #888;
+  margin-left: 0.3rem;
+}
 </style>
