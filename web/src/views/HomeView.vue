@@ -179,6 +179,7 @@ const showTranscodeDialog = ref(false)
 const transcodeFileId = ref('')
 const transcodeFileName = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let configLoaded = false
 
 const imageExts = ['png','jpg','jpeg','gif','svg','ico','bmp','webp']
 
@@ -231,10 +232,25 @@ async function onDrop(e: DragEvent) {
   await uploadFiles(fileList)
 }
 
+async function loadTranscodeConfig() {
+  if (configLoaded) return
+  configLoaded = true
+  try {
+    const res = await getTranscodeConfig()
+    transcodeEnabled.value = res.data.enabled
+    if (res.data.presets) {
+      transcodePresets.value = res.data.presets
+    }
+  } catch {
+    // ignore — transcode not available
+  }
+}
+
 async function loadFolder(id: string) {
   loading.value = true
   currentFolderId.value = id
   try {
+    await loadTranscodeConfig()
     const res = await getFolder(id)
     folders.value = res.data.folders
     files.value = res.data.files
@@ -449,19 +465,6 @@ function stopPolling() {
     pollTimer = null
   }
 }
-
-// Load transcode config on mount
-onMounted(async () => {
-  try {
-    const res = await getTranscodeConfig()
-    transcodeEnabled.value = res.data.enabled
-    if (res.data.presets) {
-      transcodePresets.value = res.data.presets
-    }
-  } catch {
-    // ignore — transcode not available
-  }
-})
 
 // Load transcode statuses when folder changes
 watch(() => files.value, async (newFiles) => {
