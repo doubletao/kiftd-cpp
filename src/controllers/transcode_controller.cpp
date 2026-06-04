@@ -99,51 +99,61 @@ static const std::vector<std::string> SUBTITLE_EXTS = {
     "srt", "ass", "ssa", "sub", "idx", "vtt", "sup"
 };
 
-static nlohmann::json find_external_subtitles(const std::string& video_path) {
+static std::string get_ext_lower(const std::string& name) {
+    auto dot = name.rfind('.');
+    if (dot == std::string::npos) return "";
+    std::string ext = name.substr(dot + 1);
+    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+    return ext;
+}
+
+static std::string detect_subtitle_lang(const std::string& fname, const std::string& stem) {
+    std::string remaining = fname.substr(stem.size());
+    if (!remaining.empty() && remaining[0] == '.') {
+        auto second_dot = remaining.find('.', 1);
+        if (second_dot != std::string::npos) {
+            std::string tag = remaining.substr(1, second_dot - 1);
+            if (tag == "sc" || tag == "chs" || tag == "zh" || tag == "zh-cn") return "chs";
+            if (tag == "tc" || tag == "cht" || tag == "zh-tw") return "cht";
+            if (tag == "en" || tag == "eng") return "en";
+            if (tag == "ja" || tag == "jpn") return "ja";
+            if (tag == "ko" || tag == "kor") return "ko";
+            if (tag.size() >= 2 && tag.size() <= 5) return tag;
+        }
+    }
+    return "";
+}
+
+static nlohmann::json find_external_subtitles_db(Database& db, FileStore& store,
+                                                  const std::string& folder_id, const std::string& video_name) {
     nlohmann::json subs = nlohmann::json::array();
-    fs::path vpath(video_path);
-    std::string stem = vpath.stem().string();
-    fs::path dir = vpath.parent_path();
 
-    if (!fs::exists(dir) || !fs::is_directory(dir)) return subs;
+    auto dot = video_name.rfind('.');
+    std::string stem = (dot != std::string::npos) ? video_name.substr(0, dot) : video_name;
 
-    for (auto& entry : fs::directory_iterator(dir)) {
-        if (!entry.is_regular_file()) continue;
-        std::string fname = entry.path().filename().string();
-        std::string ext = entry.path().extension().string();
-        if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
-        for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+    auto all_files = db.get_files_in_folder(folder_id);
+    for (auto& f : all_files) {
+        if (f.name == video_name) continue;
 
+        std::string ext = get_ext_lower(f.name);
         bool is_sub = false;
         for (auto& se : SUBTITLE_EXTS) {
             if (ext == se) { is_sub = true; break; }
         }
         if (!is_sub) continue;
 
-        if (fname.size() <= stem.size()) continue;
-        if (fname.substr(0, stem.size()) != stem) continue;
-        char sep = fname[stem.size()];
+        if (f.name.size() <= stem.size()) continue;
+        if (f.name.substr(0, stem.size()) != stem) continue;
+        char sep = f.name[stem.size()];
         if (sep != '.' && sep != ' ') continue;
 
-        std::string lang;
-        std::string remaining = fname.substr(stem.size());
-        if (!remaining.empty() && remaining[0] == '.') {
-            auto second_dot = remaining.find('.', 1);
-            if (second_dot != std::string::npos) {
-                std::string tag = remaining.substr(1, second_dot - 1);
-                if (tag == "sc" || tag == "chs" || tag == "zh" || tag == "zh-cn") lang = "chs";
-                else if (tag == "tc" || tag == "cht" || tag == "zh-tw") lang = "cht";
-                else if (tag == "en" || tag == "eng") lang = "en";
-                else if (tag == "ja" || tag == "jpn") lang = "ja";
-                else if (tag == "ko" || tag == "kor") lang = "ko";
-                else if (tag.size() >= 2 && tag.size() <= 5) lang = tag;
-            }
-        }
+        std::string disk_path = store.get_path(f.disk_name);
+        if (!fs::exists(disk_path)) continue;
 
         nlohmann::json sub;
-        sub["path"] = entry.path().string();
-        sub["filename"] = fname;
-        sub["language"] = lang;
+        sub["path"] = disk_path;
+        sub["filename"] = f.name;
+        sub["language"] = detect_subtitle_lang(f.name, stem);
         sub["ext"] = ext;
         subs.push_back(sub);
     }
@@ -242,7 +252,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
             result["duration"] = probe["format"]["duration"].get<std::string>();
         }
 
-        result["external_subtitles"] = find_external_subtitles(input_path);
+        result["external_subtitles"] = find_external_subtitles_db(db, store, file.folder_id, file.name);
 
         return crow::response(200, result.dump());
     });
