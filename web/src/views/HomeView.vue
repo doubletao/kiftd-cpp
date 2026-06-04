@@ -92,8 +92,8 @@
               <button v-if="canPreview(file.name)" class="btn-sm" @click="openPreview(file.id, file.name)">Preview</button>
               <button v-if="canPlayDirect(file.name)" class="btn-sm btn-play" @click="openVideoPreview(file.id, file.name, false)">Play</button>
               <button v-if="canTranscode(file.name) && getTranscodeStatusForFile(file.id) === 'none'" class="btn-sm btn-transcode" @click="openTranscodeDialog(file)">Transcode</button>
-              <button v-if="getTranscodeStatusForFile(file.id) === 'pending'" class="btn-sm" disabled>Queued</button>
-              <button v-if="getTranscodeStatusForFile(file.id) === 'transcoding'" class="btn-sm btn-transcoding" disabled>Transcoding...</button>
+              <button v-if="getTranscodeStatusForFile(file.id) === 'pending'" class="btn-sm btn-cancel" @click="cancelTranscode(file.id)">Queued ✕</button>
+              <button v-if="getTranscodeStatusForFile(file.id) === 'transcoding'" class="btn-sm btn-cancel" @click="cancelTranscode(file.id)">Transcoding ✕</button>
               <template v-if="getTranscodeStatusForFile(file.id) === 'done'">
                 <button class="btn-sm btn-play" @click="openVideoPreview(file.id, file.name, true)">Play</button>
                 <button class="btn-sm btn-danger" @click="removeTranscode(file.id)">Del Cache</button>
@@ -440,6 +440,17 @@ async function removeTranscode(fileId: string) {
   }
 }
 
+async function cancelTranscode(fileId: string) {
+  if (!confirm('Cancel this transcode task?')) return
+  try {
+    await deleteTranscode(fileId)
+    delete transcodeStatuses.value[fileId]
+    transcodeStatuses.value = { ...transcodeStatuses.value }
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Cancel failed')
+  }
+}
+
 function startPolling() {
   if (pollTimer) return
   pollTimer = setInterval(async () => {
@@ -655,6 +666,14 @@ onUnmounted(() => stopPolling())
 .btn-transcoding {
   background: #fff3e0;
   color: #e65100;
+}
+.btn-cancel {
+  background: #ffebee;
+  color: #c62828;
+  cursor: pointer;
+}
+.btn-cancel:hover {
+  background: #ffcdd2;
 }
 .empty {
   text-align: center;

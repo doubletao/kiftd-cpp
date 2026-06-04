@@ -2,6 +2,7 @@
 #include <string>
 #include <map>
 #include <queue>
+#include <set>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -42,6 +43,9 @@ public:
     // Query task status. Returns status from task map or checks disk.
     std::string get_status(const std::string& file_id) const;
 
+    // Cancel a running/pending task. Kills ffmpeg if running, removes from queue, cleans cache.
+    bool cancel(const std::string& file_id);
+
     // Delete transcode cache file
     bool delete_cache(const std::string& cache_path);
 
@@ -60,8 +64,15 @@ private:
     std::condition_variable cv_;
     std::queue<TranscodeTask> queue_;
     std::map<std::string, TranscodeTask> tasks_;  // file_id -> task
+    std::set<std::string> cancelled_;             // file_ids pending cancellation
     std::vector<std::thread> workers_;
     std::atomic<bool> running_{false};
+
+#ifdef _WIN32
+    std::map<std::string, void*> processes_;  // file_id -> HANDLE
+#else
+    std::map<std::string, int> processes_;    // file_id -> pid
+#endif
 };
 
 } // namespace kiftd

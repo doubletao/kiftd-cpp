@@ -341,16 +341,22 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     // DELETE /api/files/<string>/transcode
     CROW_ROUTE(app, "/api/files/<string>/transcode")
         .methods("DELETE"_method)
-    ([&db, &cfg](const crow::request& req, const std::string& file_id) {
+    ([&db, &cfg, &mgr](const crow::request& req, const std::string& file_id) {
         std::string user = get_user(req);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
-        auto file = db.get_file(file_id);
-        if (file.id.empty()) return crow::response(404, R"({"error":"file not found"})");
+        // Cancel active task if any (kills ffmpeg, removes from queue, cleans cache)
+        bool cancelled = mgr.cancel(file_id);
 
+        auto file = db.get_file(file_id);
+        if (file.id.empty()) {
+            return crow::response(200, nlohmann::json{{"deleted", cancelled}}.dump());
+        }
+
+        // Also delete cache file in case it's a completed task
         std::string cache_path = build_cache_path(cfg, db, file);
         std::error_code ec;
-        bool deleted = fs::remove(cache_path, ec);
+        bool deleted = fs::remove(cache_path, ec) || cancelled;
 
         return crow::response(200, nlohmann::json{{"deleted", deleted}}.dump());
     });

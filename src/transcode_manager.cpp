@@ -95,6 +95,42 @@ std::string TranscodeManager::get_status(const std::string& file_id) const {
     return "none";
 }
 
+bool TranscodeManager::cancel(const std::string& file_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = tasks_.find(file_id);
+    if (it == tasks_.end()) return false;
+
+    auto status = it->second.status;
+    if (status != TaskStatus::Pending && status != TaskStatus::Transcoding) {
+        return false;
+    }
+
+    std::string cache_path = it->second.cache_path;
+
+    // Mark as cancelled — worker_loop will skip pending, run_task will clean up transcoding
+    cancelled_.insert(file_id);
+
+    // Kill ffmpeg process if running
+    auto pit = processes_.find(file_id);
+    if (pit != processes_.end()) {
+#ifdef _WIN32
+        TerminateProcess(pit->second, 1);
+#else
+        kill(pit->second, SIGKILL);
+#endif
+    }
+
+    // Remove from tasks
+    tasks_.erase(it);
+
+    // Clean up partial cache file
+    std::error_code ec;
+    fs::remove(cache_path, ec);
+
+    return true;
+}
+
 bool TranscodeManager::delete_cache(const std::string& cache_path) {
     std::error_code ec;
     return fs::remove(cache_path, ec);
@@ -114,6 +150,12 @@ void TranscodeManager::worker_loop() {
             if (queue_.empty()) continue;
             task = std::move(queue_.front());
             queue_.pop();
+
+            // Skip cancelled tasks
+            if (cancelled_.count(task.file_id)) {
+                cancelled_.erase(task.file_id);
+                continue;
+            }
         }
 
         {
@@ -125,7 +167,12 @@ void TranscodeManager::worker_loop() {
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            tasks_[task.file_id] = task;
+            // If cancelled during execution, don't update task status
+            if (cancelled_.count(task.file_id)) {
+                cancelled_.erase(task.file_id);
+            } else {
+                tasks_[task.file_id] = task;
+            }
         }
     }
 }
@@ -158,12 +205,23 @@ void TranscodeManager::run_task(TranscodeTask& task) {
         return;
     }
 
+    CloseHandle(pi.hThread);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        processes_[task.file_id] = pi.hProcess;
+    }
+
     WaitForSingleObject(pi.hProcess, INFINITE);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        processes_.erase(task.file_id);
+    }
 
     DWORD exit_code = 0;
     GetExitCodeProcess(pi.hProcess, &exit_code);
     CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
 
     if (exit_code != 0) {
         task.status = TaskStatus::Failed;
