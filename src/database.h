@@ -65,6 +65,7 @@ public:
     bool rename_folder(const std::string& id, const std::string& new_name);
     bool delete_folder(const std::string& id);
     bool has_children(const std::string& folder_id);
+    std::string get_folder_path(const std::string& folder_id);
 
     // Files
     bool create_file(const FileRecord& f);

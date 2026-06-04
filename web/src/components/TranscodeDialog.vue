@@ -53,7 +53,7 @@
         <div class="field-group">
           <label class="field-label">Quality</label>
           <div class="preset-options">
-            <label v-for="(_, name) in presets" :key="name" class="preset-option"
+            <label v-for="name in presetOrder" :key="name" class="preset-option"
                    :class="{ active: selectedPreset === name }">
               <input type="radio" :value="name" v-model="selectedPreset" />
               <span class="preset-name">{{ name }}</span>
@@ -117,8 +117,18 @@ const selectedAudio = ref(0)
 const selectedSub = ref('none')
 const selectedPreset = ref('medium')
 
+const PRESET_ORDER = ['fast', 'medium', 'high']
+
 const audioStreams = computed(() => streams.value.filter(s => s.type === 'audio'))
 const subtitleStreams = computed(() => streams.value.filter(s => s.type === 'subtitle'))
+const presetOrder = computed(() => {
+  const available = new Set(Object.keys(props.presets))
+  const ordered = PRESET_ORDER.filter(name => available.has(name))
+  for (const name of available) {
+    if (!ordered.includes(name)) ordered.push(name)
+  }
+  return ordered
+})
 
 watch(() => props.visible, async (val) => {
   if (val && props.fileId) {

@@ -433,18 +433,8 @@ function startPolling() {
     for (const id of activeIds) {
       try {
         const res = await getTranscodeStatus(id)
-        const tasks = res.data
-        if (Array.isArray(tasks) && tasks.length > 0) {
-          // Find the best status (done > transcoding > pending > failed)
-          let best = 'none'
-          for (const t of tasks) {
-            if (t.status === 'done') { best = 'done'; break }
-            if (t.status === 'transcoding') best = 'transcoding'
-            else if (t.status === 'pending' && best === 'none') best = 'pending'
-            else if (t.status === 'failed' && best === 'none') best = 'failed'
-          }
-          transcodeStatuses.value[id] = best
-        }
+        const status = res.data.status || 'none'
+        transcodeStatuses.value[id] = status
       } catch {
         // ignore
       }
@@ -480,23 +470,13 @@ watch(() => files.value, async (newFiles) => {
     if (videoExts.includes(getExt(f.name))) {
       try {
         const res = await getTranscodeStatus(f.id)
-        const tasks = res.data
-        if (Array.isArray(tasks) && tasks.length > 0) {
-          let best = 'none'
-          for (const t of tasks) {
-            if (t.status === 'done') { best = 'done'; break }
-            if (t.status === 'transcoding') best = 'transcoding'
-            else if (t.status === 'pending' && best === 'none') best = 'pending'
-            else if (t.status === 'failed' && best === 'none') best = 'failed'
-          }
-          if (best !== 'none') {
-            transcodeStatuses.value[f.id] = best
-          }
+        const status = res.data.status || 'none'
+        if (status !== 'none') {
+          transcodeStatuses.value[f.id] = status
         }
       } catch { /* ignore */ }
     }
   }
-  // Start polling if there are active tasks
   const hasActive = Object.values(transcodeStatuses.value).some(s => s === 'pending' || s === 'transcoding')
   if (hasActive) startPolling()
 }, { immediate: false })

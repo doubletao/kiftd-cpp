@@ -235,6 +235,25 @@ bool Database::has_children(const std::string& folder_id) {
     return has;
 }
 
+std::string Database::get_folder_path(const std::string& folder_id) {
+    // Walk up the parent chain to build relative path like "anime/电视剧/"
+    std::vector<std::string> parts;
+    std::string current = folder_id;
+    while (!current.empty()) {
+        auto folder = get_folder(current);
+        if (folder.id.empty()) break;
+        parts.push_back(folder.name);
+        current = folder.parent_id;
+    }
+    // Reverse to get root-to-leaf order
+    std::string path;
+    for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
+        if (!path.empty()) path += "/";
+        path += *it;
+    }
+    return path;
+}
+
 // --- Files ---
 
 bool Database::create_file(const FileRecord& f) {

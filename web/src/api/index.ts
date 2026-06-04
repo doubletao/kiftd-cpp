@@ -72,5 +72,4 @@ export const getTranscodeStatus = (id: string) => api.get(`/files/${id}/transcod
 
 export const deleteTranscode = (id: string) => api.delete(`/files/${id}/transcode`)
 
-export const getTranscodeStreamUrl = (id: string, preset?: string) =>
-  `/api/files/${id}/transcode/stream${preset ? '?preset=' + preset : ''}`
+export const getTranscodeStreamUrl = (id: string) => `/api/files/${id}/transcode/stream`
