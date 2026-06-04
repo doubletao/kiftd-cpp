@@ -83,7 +83,7 @@ bool Database::init_schema() {
         CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
         CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
         CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id);
-    )");
+    )") && init_play_history_schema();
 }
 
 // --- Users ---
@@ -398,6 +398,80 @@ bool Database::delete_share(const std::string& id) {
     auto stmt = prepare("DELETE FROM shares WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+// --- Play History ---
+
+bool Database::init_play_history_schema() {
+    return exec(R"(
+        CREATE TABLE IF NOT EXISTS play_history (
+            folder_id  TEXT NOT NULL,
+            file_id    TEXT NOT NULL,
+            position   REAL NOT NULL DEFAULT 0,
+            duration   REAL NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            preset     TEXT NOT NULL DEFAULT '',
+            audio_index       INTEGER NOT NULL DEFAULT 0,
+            subtitle_index    INTEGER NOT NULL DEFAULT -1,
+            external_subtitle_path TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (folder_id)
+        );
+    )");
+}
+
+bool Database::upsert_play_history(const std::string& folder_id, const std::string& file_id, double position, double duration,
+                                   const std::string& preset, int audio_index, int subtitle_index, const std::string& external_subtitle_path) {
+    auto stmt = prepare(
+        "INSERT INTO play_history (folder_id, file_id, position, duration, updated_at, preset, audio_index, subtitle_index, external_subtitle_path) "
+        "VALUES (?, ?, ?, ?, datetime('now','localtime'), ?, ?, ?, ?) "
+        "ON CONFLICT(folder_id) DO UPDATE SET file_id = excluded.file_id, "
+        "position = excluded.position, duration = excluded.duration, updated_at = excluded.updated_at, "
+        "preset = CASE WHEN excluded.preset != '' THEN excluded.preset ELSE play_history.preset END, "
+        "audio_index = CASE WHEN excluded.preset != '' THEN excluded.audio_index ELSE play_history.audio_index END, "
+        "subtitle_index = CASE WHEN excluded.preset != '' THEN excluded.subtitle_index ELSE play_history.subtitle_index END, "
+        "external_subtitle_path = CASE WHEN excluded.preset != '' THEN excluded.external_subtitle_path ELSE play_history.external_subtitle_path END");
+    if (!stmt) return false;
+    sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, file_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(stmt, 3, position);
+    sqlite3_bind_double(stmt, 4, duration);
+    sqlite3_bind_text(stmt, 5, preset.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 6, audio_index);
+    sqlite3_bind_int(stmt, 7, subtitle_index);
+    sqlite3_bind_text(stmt, 8, external_subtitle_path.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+std::vector<PlayHistoryRecord> Database::get_all_play_history() {
+    std::vector<PlayHistoryRecord> result;
+    auto stmt = prepare("SELECT folder_id, file_id, position, duration, updated_at, preset, audio_index, subtitle_index, external_subtitle_path FROM play_history ORDER BY updated_at DESC");
+    if (!stmt) return result;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        PlayHistoryRecord r;
+        r.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        r.file_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        r.position = sqlite3_column_double(stmt, 2);
+        r.duration = sqlite3_column_double(stmt, 3);
+        r.updated_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        r.preset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        r.audio_index = sqlite3_column_int(stmt, 6);
+        r.subtitle_index = sqlite3_column_int(stmt, 7);
+        r.external_subtitle_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        result.push_back(std::move(r));
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+bool Database::delete_play_history(const std::string& folder_id) {
+    auto stmt = prepare("DELETE FROM play_history WHERE folder_id = ?");
+    if (!stmt) return false;
+    sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
     bool ok = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     return ok;

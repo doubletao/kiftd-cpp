@@ -10,6 +10,7 @@
         <router-link to="/" class="logo">kiftd</router-link>
       </div>
       <div class="header-right">
+        <router-link to="/play-history" class="nav-link">Play History</router-link>
         <router-link to="/transcode-tasks" class="nav-link">Transcode Tasks</router-link>
         <router-link to="/shares" class="nav-link">My Shares</router-link>
         <span class="user">{{ userStore.username }}</span>
@@ -85,6 +86,7 @@
           <tr v-for="file in files" :key="file.id">
             <td>
               <span class="icon">&#128196;</span> {{ file.name }}
+              <span v-if="playHistoryRecord && playHistoryRecord.file_id === file.id" class="resume-badge">Resume</span>
             </td>
             <td>{{ formatSize(file.size) }}</td>
             <td>{{ file.creator }}</td>
@@ -120,8 +122,14 @@
       :file-name="previewFileName"
       :image-files="imageFiles"
       :transcoded="previewTranscoded"
+      :video-files="videoFiles"
+      :folder-id="currentFolderId"
+      :progress-threshold="playProgressThreshold"
+      :initial-time="resumeTime"
       @close="showPreview = false"
       @navigate="onPreviewNavigate"
+      @play-next="onPlayNext"
+      @progress-update="onProgressUpdate"
     />
 
     <!-- Transcode Dialog -->
@@ -149,7 +157,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
-import { getFolder, createFolder, renameFolder, deleteFolder, uploadFile, downloadFile, renameFile, deleteFile, createShare, getTranscodeConfig, submitTranscode, getTranscodeStatus, deleteTranscode } from '../api'
+import { getFolder, createFolder, renameFolder, deleteFolder, uploadFile, downloadFile, renameFile, deleteFile, createShare, getTranscodeConfig, submitTranscode, getTranscodeStatus, deleteTranscode, getPlayHistory, updatePlayHistory, deletePlayHistory } from '../api'
 import FilePreview from '../components/FilePreview.vue'
 import TranscodeDialog from '../components/TranscodeDialog.vue'
 
@@ -184,7 +192,19 @@ const transcodeFileName = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let configLoaded = false
 
+// Play history
+const playProgressThreshold = ref(90)
+const autoTranscodeNext = ref(false)
+interface PlayHistoryItem {
+  folder_id: string; file_id: string; position: number; duration: number
+  preset?: string; audio_index?: number; subtitle_index?: number; external_subtitle_path?: string
+}
+const playHistoryRecord = ref<PlayHistoryItem | null>(null)
+const resumeTime = ref(0)
+
 const imageExts = ['png','jpg','jpeg','gif','svg','ico','bmp','webp']
+const videoExts = ['mkv','avi','flv','wmv','mov','ts','m4v','rmvb','rm','3gp','f4v','vob']
+const directPlayExts = ['mp4']
 
 const imageFiles = computed(() =>
   files.value.filter(f => {
@@ -248,6 +268,13 @@ async function loadTranscodeConfig() {
       const p = res.data.profiles[res.data.profile]
       transcodeProfileName.value = p?.name || res.data.profile
     }
+    // Play history config from transcode config response
+    if (res.data.play_progress_threshold !== undefined) {
+      playProgressThreshold.value = res.data.play_progress_threshold
+    }
+    if (res.data.auto_transcode_next !== undefined) {
+      autoTranscodeNext.value = res.data.auto_transcode_next
+    }
   } catch {
     // ignore — transcode not available
   }
@@ -256,16 +283,44 @@ async function loadTranscodeConfig() {
 async function loadFolder(id: string) {
   loading.value = true
   currentFolderId.value = id
+  resumeTime.value = 0
+  playHistoryRecord.value = null
   try {
     await loadTranscodeConfig()
     const res = await getFolder(id)
     folders.value = res.data.folders
     files.value = res.data.files
     breadcrumb.value = res.data.breadcrumb
+    await loadPlayHistory(id)
   } catch (e: any) {
     if (e.response?.status === 401) router.push('/login')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadPlayHistory(folderId: string) {
+  try {
+    const res = await getPlayHistory()
+    const record = res.data.find((r: any) => r.folder_id === folderId)
+    if (record) {
+      playHistoryRecord.value = record
+      // Check if this was a resume navigation
+      const playFileId = route.query.play as string
+      if (playFileId && playFileId === record.file_id) {
+        resumeTime.value = record.position
+        // Find the file to open
+        const file = files.value.find(f => f.id === playFileId)
+        if (file) {
+          const transcoded = getTranscodeStatusForFile(file.id) === 'done' || directPlayExts.includes(getExt(file.name))
+          openVideoPreview(file.id, file.name, transcoded)
+        }
+        // Clear query param
+        router.replace({ query: {} })
+      }
+    }
+  } catch {
+    // ignore
   }
 }
 
@@ -386,10 +441,6 @@ function formatSize(bytes: number): string {
   return (bytes / 1073741824).toFixed(1) + ' GB'
 }
 
-// Video extensions that can be transcoded
-const videoExts = ['mkv','avi','flv','wmv','mov','ts','m4v','rmvb','rm','3gp','f4v','vob']
-const directPlayExts = ['mp4']
-
 function canTranscode(name: string): boolean {
   if (!transcodeEnabled.value) return false
   const dot = name.lastIndexOf('.')
@@ -417,6 +468,12 @@ function openVideoPreview(fileId: string, fileName: string, transcoded: boolean)
   previewFileId.value = fileId
   previewFileName.value = fileName
   previewTranscoded.value = transcoded
+  // Resume from play history if applicable
+  if (playHistoryRecord.value && playHistoryRecord.value.file_id === fileId) {
+    resumeTime.value = playHistoryRecord.value.position
+  } else {
+    resumeTime.value = 0
+  }
   showPreview.value = true
 }
 
@@ -426,6 +483,18 @@ async function handleTranscodeSubmit(preset: string, audioIndex: number, subtitl
     transcodeStatuses.value[transcodeFileId.value] = 'pending'
     showTranscodeDialog.value = false
     startPolling()
+    // Save transcode params as folder default for auto-transcode
+    try {
+      await updatePlayHistory(currentFolderId.value, transcodeFileId.value, 0, 0, preset, audioIndex, subtitleIndex, externalSubtitlePath)
+      // Update local record so subsequent auto-transcode uses these params
+      playHistoryRecord.value = {
+        folder_id: currentFolderId.value,
+        file_id: transcodeFileId.value,
+        position: 0, duration: 0,
+        preset, audio_index: audioIndex, subtitle_index: subtitleIndex,
+        external_subtitle_path: externalSubtitlePath
+      }
+    } catch { /* ignore */ }
   } catch (e: any) {
     alert(e.response?.data?.error || 'Transcode submit failed')
   }
@@ -450,6 +519,63 @@ async function cancelTranscode(fileId: string) {
   } catch (e: any) {
     alert(e.response?.data?.error || 'Cancel failed')
   }
+}
+
+// Play history handlers
+async function onProgressUpdate(folderId: string, fileId: string, position: number, duration: number) {
+  try {
+    await updatePlayHistory(folderId, fileId, position, duration)
+  } catch {
+    // ignore
+  }
+}
+
+async function onPlayNext(fileId: string, fileName: string, transcoded: boolean) {
+  // Save progress at end of current video
+  const videoFilesList = videoFiles.value
+  const currentIdx = videoFilesList.findIndex(f => f.id === previewFileId.value)
+  const currentFile = videoFilesList[currentIdx]
+  if (currentFile) {
+    // Mark current as complete (position = duration)
+    try {
+      await updatePlayHistory(currentFolderId.value, currentFile.id, 1, 1)
+    } catch { /* ignore */ }
+  }
+
+  // Check if this was the last episode
+  if (!videoFilesList.length || currentIdx >= videoFilesList.length - 1) {
+    // All episodes watched, delete history
+    try {
+      await deletePlayHistory(currentFolderId.value)
+      playHistoryRecord.value = null
+    } catch { /* ignore */ }
+    return
+  }
+
+  // Auto-transcode next episode
+  if (autoTranscodeNext.value && transcodeEnabled.value) {
+    const nextFile = videoFilesList[currentIdx + 1]
+    if (nextFile && !directPlayExts.includes(getExt(nextFile.name))) {
+      const status = getTranscodeStatusForFile(nextFile.id)
+      if (status === 'none') {
+        // Use folder's saved transcode params from play_history
+        const rec = playHistoryRecord.value
+        const preset = rec?.preset || 'fast'
+        const audioIdx = rec?.audio_index ?? 0
+        const subtitleIdx = rec?.subtitle_index ?? -1
+        const extSubPath = rec?.external_subtitle_path || ''
+        try {
+          await submitTranscode(nextFile.id, preset, audioIdx, subtitleIdx, extSubPath)
+          transcodeStatuses.value[nextFile.id] = 'pending'
+          startPolling()
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
+  // Switch to next episode
+  resumeTime.value = 0
+  openVideoPreview(fileId, fileName, transcoded)
 }
 
 function startPolling() {
@@ -506,6 +632,20 @@ function getExt(name: string): string {
   const dot = name.lastIndexOf('.')
   return dot >= 0 ? name.substring(dot + 1).toLowerCase() : ''
 }
+
+const allVideoExts = [...videoExts, ...directPlayExts]
+const videoFiles = computed(() =>
+  files.value
+    .filter(f => {
+      const dot = f.name.lastIndexOf('.')
+      return dot >= 0 && allVideoExts.includes(f.name.substring(dot + 1).toLowerCase())
+    })
+    .map(f => ({
+      id: f.id,
+      name: f.name,
+      transcoded: getTranscodeStatusForFile(f.id) === 'done' || directPlayExts.includes(getExt(f.name))
+    }))
+)
 
 onUnmounted(() => stopPolling())
 </script>
@@ -675,6 +815,17 @@ onUnmounted(() => stopPolling())
 }
 .btn-cancel:hover {
   background: #ffcdd2;
+}
+.resume-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  background: #667eea;
+  color: white;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-left: 0.4rem;
+  vertical-align: middle;
 }
 .empty {
   text-align: center;

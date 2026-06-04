@@ -35,7 +35,21 @@
         </div>
         <!-- Video -->
         <div v-else-if="isVideo" class="preview-video">
-          <video :src="videoUrl" controls autoplay></video>
+          <div class="video-toolbar">
+            <span class="skip-label">Skip Intro:</span>
+            <button class="skip-btn" @click="adjustSkip('intro', -5)">-5s</button>
+            <span class="skip-value">{{ skipIntroVal }}s</span>
+            <button class="skip-btn" @click="adjustSkip('intro', 5)">+5s</button>
+            <span class="skip-sep">|</span>
+            <span class="skip-label">Skip Outro:</span>
+            <button class="skip-btn" @click="adjustSkip('outro', -5)">-5s</button>
+            <span class="skip-value">{{ skipOutroVal }}s</span>
+            <button class="skip-btn" @click="adjustSkip('outro', 5)">+5s</button>
+          </div>
+          <video ref="videoRef" :src="videoUrl" controls autoplay
+                 @loadedmetadata="onVideoLoaded"
+                 @timeupdate="onTimeUpdate"
+                 @ended="onVideoEnded"></video>
         </div>
         <!-- Text -->
         <pre v-else-if="isText" class="preview-text">{{ textContent }}</pre>
@@ -57,20 +71,38 @@ interface ImageFile {
   name: string
 }
 
+interface VideoFile {
+  id: string
+  name: string
+  transcoded: boolean
+}
+
 const props = defineProps<{
   visible: boolean
   fileId: string
   fileName: string
   imageFiles?: ImageFile[]
   transcoded?: boolean
+  videoFiles?: VideoFile[]
+  folderId?: string
+  progressThreshold?: number
+  initialTime?: number
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'navigate', id: string, name: string): void
+  (e: 'playNext', fileId: string, fileName: string, transcoded: boolean): void
+  (e: 'progressUpdate', folderId: string, fileId: string, position: number, duration: number): void
 }>()
 
 const textContent = ref('')
+
+// Video playback state
+const videoRef = ref<HTMLVideoElement | null>(null)
+const skipIntroVal = ref(0)
+const skipOutroVal = ref(0)
+let lastProgressEmit = 0
 
 // Zoom & Pan state
 const scale = ref(1)
@@ -191,6 +223,50 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
+// Video playback methods
+function onVideoLoaded() {
+  if (videoRef.value && props.initialTime && props.initialTime > 0) {
+    videoRef.value.currentTime = props.initialTime
+  }
+  if (videoRef.value && skipIntroVal.value > 0 && videoRef.value.currentTime < skipIntroVal.value) {
+    videoRef.value.currentTime = skipIntroVal.value
+  }
+}
+
+function onTimeUpdate() {
+  if (!videoRef.value || !props.folderId) return
+  const video = videoRef.value
+  const now = Date.now()
+  if (now - lastProgressEmit >= 5000) {
+    lastProgressEmit = now
+    emit('progressUpdate', props.folderId, props.fileId, video.currentTime, video.duration)
+  }
+  // Skip outro
+  if (skipOutroVal.value > 0 && video.duration > 0 && (video.duration - video.currentTime) <= skipOutroVal.value) {
+    playNextEpisode()
+  }
+}
+
+function onVideoEnded() {
+  playNextEpisode()
+}
+
+function playNextEpisode() {
+  if (!props.videoFiles || props.videoFiles.length === 0) return
+  const idx = props.videoFiles.findIndex(f => f.id === props.fileId)
+  if (idx < 0 || idx >= props.videoFiles.length - 1) return
+  const next = props.videoFiles[idx + 1]
+  emit('playNext', next.id, next.name, next.transcoded)
+}
+
+function adjustSkip(type: 'intro' | 'outro', delta: number) {
+  if (type === 'intro') {
+    skipIntroVal.value = Math.max(0, skipIntroVal.value + delta)
+  } else {
+    skipOutroVal.value = Math.max(0, skipOutroVal.value + delta)
+  }
+}
+
 watch(() => props.visible, async (val) => {
   if (val) {
     document.addEventListener('keydown', onKeyDown)
@@ -209,9 +285,11 @@ watch(() => props.visible, async (val) => {
   }
 })
 
-// Reset transform on image navigation
+// Reset transform on image navigation, reset video state on file change
 watch(() => props.fileId, () => {
   resetTransform()
+  lastProgressEmit = 0
+  // Don't reset skip values - they are session-wide preferences
 })
 
 function close() {
@@ -386,6 +464,37 @@ function close() {
   max-width: 100%;
   max-height: 70vh;
   background: #000;
+}
+.video-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+  font-size: 0.85rem;
+  color: #555;
+}
+.skip-label {
+  font-weight: 500;
+  margin-left: 0.3rem;
+}
+.skip-btn {
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.skip-btn:hover { background: #e0e0e0; }
+.skip-value {
+  min-width: 2.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.skip-sep {
+  margin: 0 0.3rem;
+  color: #ccc;
 }
 .preview-text {
   width: 100%;

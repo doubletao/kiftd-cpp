@@ -31,6 +31,12 @@ const router = createRouter({
       name: 'transcode-tasks',
       component: () => import('../views/TranscodeTasksView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/play-history',
+      name: 'play-history',
+      component: () => import('../views/PlayHistoryView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

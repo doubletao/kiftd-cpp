@@ -187,6 +187,9 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
             }
             j["profiles"] = profiles;
         }
+        // Play history config (always returned, independent of ffmpeg)
+        j["play_progress_threshold"] = cfg.play_progress_threshold;
+        j["auto_transcode_next"] = cfg.auto_transcode_next;
         return crow::response(200, j.dump());
     });
 

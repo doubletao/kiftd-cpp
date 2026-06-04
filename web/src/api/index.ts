@@ -78,3 +78,15 @@ export const getTranscodeTasks = () => api.get('/transcode/tasks')
 
 export const reorderTranscodeTask = (fileId: string, direction: number) =>
   api.put('/transcode/tasks/reorder', { file_id: fileId, direction })
+
+// Play History
+export const getPlayHistory = () => api.get('/play-history')
+
+export const updatePlayHistory = (folderId: string, fileId: string, position: number, duration: number,
+  preset?: string, audioIndex?: number, subtitleIndex?: number, externalSubtitlePath?: string) =>
+  api.put('/play-history', {
+    folder_id: folderId, file_id: fileId, position, duration,
+    ...(preset !== undefined ? { preset, audio_index: audioIndex ?? 0, subtitle_index: subtitleIndex ?? -1, external_subtitle_path: externalSubtitlePath ?? '' } : {})
+  })
+
+export const deletePlayHistory = (folderId: string) => api.delete(`/play-history/${folderId}`)

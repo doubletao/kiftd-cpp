@@ -5,6 +5,7 @@
         <router-link to="/" class="logo">kiftd</router-link>
       </div>
       <div class="header-right">
+        <router-link to="/play-history" class="nav-link">Play History</router-link>
         <router-link to="/transcode-tasks" class="nav-link active">Transcode Tasks</router-link>
         <router-link to="/shares" class="nav-link">My Shares</router-link>
         <span class="user">{{ userStore.username }}</span>

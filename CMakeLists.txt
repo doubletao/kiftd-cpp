@@ -40,6 +40,7 @@ add_executable(kiftd
     src/controllers/file_controller.cpp
     src/controllers/share_controller.cpp
     src/controllers/transcode_controller.cpp
+    src/controllers/play_history_controller.cpp
     src/utils/sha256.cpp
     src/utils/uuid.cpp
 )

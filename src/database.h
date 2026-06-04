@@ -40,6 +40,19 @@ struct ShareRecord {
     std::string created_at;
 };
 
+struct PlayHistoryRecord {
+    std::string folder_id;
+    std::string file_id;
+    double position = 0;    // seconds
+    double duration = 0;    // seconds
+    std::string updated_at;
+    // Transcode params (per-folder default for auto-transcode)
+    std::string preset;
+    int audio_index = 0;
+    int subtitle_index = -1;
+    std::string external_subtitle_path;
+};
+
 class Database {
 public:
     Database();
@@ -79,6 +92,13 @@ public:
     ShareRecord get_share(const std::string& id);
     std::vector<ShareRecord> get_shares_by_user(const std::string& user);
     bool delete_share(const std::string& id);
+
+    // Play History
+    bool init_play_history_schema();
+    bool upsert_play_history(const std::string& folder_id, const std::string& file_id, double position, double duration,
+                             const std::string& preset = "", int audio_index = 0, int subtitle_index = -1, const std::string& external_subtitle_path = "");
+    std::vector<PlayHistoryRecord> get_all_play_history();
+    bool delete_play_history(const std::string& folder_id);
 
 private:
     sqlite3* db_ = nullptr;

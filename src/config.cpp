@@ -108,6 +108,10 @@ void Config::load(const std::string& config_path) {
         if (!ffmpeg_path.empty()) {
             fs::create_directories(transcode_dir);
         }
+
+        // Play History config
+        if (j.contains("play_progress_threshold")) play_progress_threshold = j["play_progress_threshold"].get<int>();
+        if (j.contains("auto_transcode_next")) auto_transcode_next = j["auto_transcode_next"].get<bool>();
     } catch (...) {
         // Config parse error, use defaults
     }

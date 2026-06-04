@@ -49,6 +49,10 @@ struct Config {
         {"amf",   {"AMD AMF",         "\"{ffmpeg}\" -y -init_hw_device d3d11va=hw:0 -i \"{input}\" {vf_args} -map 0:v:0 {audio_map} -c:v h264_amf -qp_i {crf} -qp_p {crf} -quality {preset} -c:a aac -b:a 128k -movflags +faststart \"{output}\""}}
     };
 
+    // Play History
+    int play_progress_threshold = 90;   // 0-100, position/duration >= this% = watched
+    bool auto_transcode_next = false;
+
     static Config& instance();
     void load(const std::string& config_path);
     void apply_defaults();

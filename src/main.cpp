@@ -13,6 +13,7 @@
 #include "controllers/file_controller.h"
 #include "controllers/share_controller.h"
 #include "controllers/transcode_controller.h"
+#include "controllers/play_history_controller.h"
 
 namespace fs = std::filesystem;
 using namespace kiftd;
@@ -100,6 +101,7 @@ int main(int argc, char* argv[]) {
     register_file_routes(app, db, file_store);
     register_share_routes(app, db, file_store);
     register_transcode_routes(app, db, file_store, transcode_mgr, cfg);
+    register_play_history_routes(app, db, cfg);
 
     // Static file serving + SPA fallback
     CROW_ROUTE(app, "/<path>")
