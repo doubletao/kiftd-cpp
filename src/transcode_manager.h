@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 #include <map>
-#include <queue>
+#include <deque>
 #include <set>
 #include <mutex>
 #include <condition_variable>
@@ -52,6 +52,12 @@ public:
     // Check if cache exists on disk
     static bool cache_exists(const std::string& cache_path);
 
+    // Get all tasks (for task list page)
+    std::vector<TranscodeTask> get_all_tasks() const;
+
+    // Move a pending task up or down in queue. direction: -1=up, 1=down
+    bool reorder_task(const std::string& file_id, int direction);
+
 private:
     void worker_loop();
     void run_task(TranscodeTask& task);
@@ -62,7 +68,7 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
-    std::queue<TranscodeTask> queue_;
+    std::deque<TranscodeTask> queue_;
     std::map<std::string, TranscodeTask> tasks_;  // file_id -> task
     std::set<std::string> cancelled_;             // file_ids pending cancellation
     std::vector<std::thread> workers_;

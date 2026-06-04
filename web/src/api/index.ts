@@ -73,3 +73,8 @@ export const getTranscodeStatus = (id: string) => api.get(`/files/${id}/transcod
 export const deleteTranscode = (id: string) => api.delete(`/files/${id}/transcode`)
 
 export const getTranscodeStreamUrl = (id: string) => `/api/files/${id}/transcode/stream`
+
+export const getTranscodeTasks = () => api.get('/transcode/tasks')
+
+export const reorderTranscodeTask = (fileId: string, direction: number) =>
+  api.put('/transcode/tasks/reorder', { file_id: fileId, direction })

@@ -1,6 +1,7 @@
 #include "transcode_manager.h"
 #include <filesystem>
 #include <iostream>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -76,7 +77,7 @@ bool TranscodeManager::submit(const std::string& file_id, const std::string& inp
     task.status = TaskStatus::Pending;
 
     tasks_[file_id] = task;
-    queue_.push(task);
+    queue_.push_back(task);
     cv_.notify_one();
     return true;
 }
@@ -140,6 +141,46 @@ bool TranscodeManager::cache_exists(const std::string& cache_path) {
     return fs::exists(cache_path) && fs::file_size(cache_path) > 0;
 }
 
+std::vector<TranscodeTask> TranscodeManager::get_all_tasks() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Pending tasks from queue (in order)
+    std::vector<TranscodeTask> result;
+    for (auto& t : queue_) {
+        result.push_back(t);
+    }
+
+    // Active and completed tasks from map (not already in queue)
+    for (auto& [id, t] : tasks_) {
+        if (t.status != TaskStatus::Pending) {
+            result.push_back(t);
+        }
+    }
+    return result;
+}
+
+bool TranscodeManager::reorder_task(const std::string& file_id, int direction) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find the task in the queue
+    auto it = std::find_if(queue_.begin(), queue_.end(),
+        [&](const TranscodeTask& t) { return t.file_id == file_id; });
+
+    if (it == queue_.end()) return false;
+
+    if (direction < 0) {
+        // Move up: swap with previous element
+        if (it == queue_.begin()) return false;
+        std::iter_swap(it, std::prev(it));
+    } else {
+        // Move down: swap with next element
+        auto next_it = std::next(it);
+        if (next_it == queue_.end()) return false;
+        std::iter_swap(it, next_it);
+    }
+    return true;
+}
+
 void TranscodeManager::worker_loop() {
     while (running_) {
         TranscodeTask task;
@@ -149,7 +190,7 @@ void TranscodeManager::worker_loop() {
             if (!running_ && queue_.empty()) return;
             if (queue_.empty()) continue;
             task = std::move(queue_.front());
-            queue_.pop();
+            queue_.pop_front();
 
             // Skip cancelled tasks
             if (cancelled_.count(task.file_id)) {

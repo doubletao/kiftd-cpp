@@ -361,6 +361,56 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
         return crow::response(200, nlohmann::json{{"deleted", deleted}}.dump());
     });
 
+    // GET /api/transcode/tasks
+    CROW_ROUTE(app, "/api/transcode/tasks")
+        .methods("GET"_method)
+    ([&mgr, &db](const crow::request& req) {
+        std::string user = get_user(req);
+        if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
+
+        auto tasks = mgr.get_all_tasks();
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto& t : tasks) {
+            nlohmann::json j;
+            j["file_id"] = t.file_id;
+
+            auto file = db.get_file(t.file_id);
+            j["file_name"] = file.name;
+
+            switch (t.status) {
+                case TaskStatus::Pending: j["status"] = "pending"; break;
+                case TaskStatus::Transcoding: j["status"] = "transcoding"; break;
+                case TaskStatus::Done: j["status"] = "done"; break;
+                case TaskStatus::Failed: j["status"] = "failed"; break;
+            }
+            j["preset"] = t.preset;
+            if (!t.error.empty()) j["error"] = t.error;
+            arr.push_back(j);
+        }
+        return crow::response(200, arr.dump());
+    });
+
+    // PUT /api/transcode/tasks/reorder
+    CROW_ROUTE(app, "/api/transcode/tasks/reorder")
+        .methods("PUT"_method)
+    ([&mgr](const crow::request& req) {
+        std::string user = get_user(req);
+        if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
+
+        auto body = nlohmann::json::parse(req.body, nullptr, false);
+        if (body.is_discarded() || !body.contains("file_id") || !body.contains("direction")) {
+            return crow::response(400, R"({"error":"missing file_id or direction"})");
+        }
+
+        std::string file_id = body["file_id"].get<std::string>();
+        int direction = body["direction"].get<int>();
+
+        if (!mgr.reorder_task(file_id, direction)) {
+            return crow::response(409, R"({"error":"cannot reorder"})");
+        }
+        return crow::response(200, R"({"ok":true})");
+    });
+
     // GET /api/files/<string>/transcode/stream
     CROW_ROUTE(app, "/api/files/<string>/transcode/stream")
         .methods("GET"_method)

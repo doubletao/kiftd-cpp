@@ -25,6 +25,12 @@ const router = createRouter({
       name: 'shares',
       component: () => import('../views/SharesView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/transcode-tasks',
+      name: 'transcode-tasks',
+      component: () => import('../views/TranscodeTasksView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })
