@@ -148,13 +148,61 @@ void register_file_routes(crow::SimpleApp& app, Database& db, FileStore& store) 
         if (!fs::exists(path)) return crow::response(404, R"({"error":"file missing"})");
 
         std::string ct = get_content_type(file.name);
-        // Only allow preview for text, images and audio
+        // Only allow preview for text, images, audio and mp4 video
         if (ct.find("text/") == std::string::npos &&
             ct.find("image/") == std::string::npos &&
             ct.find("audio/") == std::string::npos &&
+            ct != "video/mp4" &&
             ct != "application/json" &&
             ct != "application/javascript") {
             return crow::response(403, R"({"error":"preview not supported"})");
+        }
+
+        // Handle Range requests for video seeking
+        if (ct == "video/mp4") {
+            crow::response res;
+            auto range_header = req.get_header_value("Range");
+            uint64_t file_size = fs::file_size(path);
+
+            if (!range_header.empty() && range_header.find("bytes=") == 0) {
+                std::string range_val = range_header.substr(6);
+                auto dash_pos = range_val.find('-');
+                uint64_t start = 0, end = file_size - 1;
+
+                if (dash_pos == 0) {
+                    start = file_size - std::stoull(range_val.substr(1));
+                } else if (dash_pos == std::string::npos) {
+                    start = std::stoull(range_val);
+                } else {
+                    start = std::stoull(range_val.substr(0, dash_pos));
+                    if (dash_pos + 1 < range_val.size()) {
+                        end = std::stoull(range_val.substr(dash_pos + 1));
+                    }
+                }
+
+                if (start >= file_size) {
+                    res.code = 416;
+                    res.add_header("Content-Range", "bytes */" + std::to_string(file_size));
+                    return res;
+                }
+
+                uint64_t length = end - start + 1;
+                std::ifstream ifs(path, std::ios::binary);
+                ifs.seekg(start);
+                std::string buf(length, '\0');
+                ifs.read(buf.data(), length);
+
+                res.code = 206;
+                res.body = buf;
+                res.add_header("Content-Range", "bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(file_size));
+                res.add_header("Content-Length", std::to_string(length));
+            } else {
+                res.set_static_file_info(path);
+            }
+
+            res.add_header("Content-Type", ct);
+            res.add_header("Accept-Ranges", "bytes");
+            return res;
         }
 
         crow::response res;

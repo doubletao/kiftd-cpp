@@ -356,10 +356,10 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
             return crow::response(200, nlohmann::json{{"deleted", cancelled}}.dump());
         }
 
-        // Also delete cache file in case it's a completed task
+        // Also delete cache directory in case it's a completed task
         std::string cache_path = build_cache_path(cfg, db, file);
         std::error_code ec;
-        bool deleted = fs::remove(cache_path, ec) || cancelled;
+        bool deleted = (fs::remove_all(fs::path(cache_path).parent_path(), ec) > 0) || cancelled;
 
         return crow::response(200, nlohmann::json{{"deleted", deleted}}.dump());
     });

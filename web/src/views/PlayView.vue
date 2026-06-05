@@ -66,6 +66,7 @@ interface VideoFile {
   id: string
   name: string
   transcoded: boolean
+  canPlayDirect: boolean
 }
 
 const folderId = computed(() => route.params.folderId as string)
@@ -114,7 +115,7 @@ function getExt(name: string): string {
 const videoUrl = computed(() => {
   const f = videoFiles.value.find(f => f.id === fileId.value)
   if (!f) return ''
-  return f.transcoded ? getTranscodeStreamUrl(f.id) : getPreviewUrl(f.id)
+  return f.canPlayDirect ? getPreviewUrl(f.id) : getTranscodeStreamUrl(f.id)
 })
 
 function formatTime(seconds: number): string {
@@ -142,8 +143,9 @@ async function loadFolder() {
     for (const f of files) {
       const ext = getExt(f.name)
       if (!allVideoExts.includes(ext)) continue
-      let transcoded = directPlayExts.includes(ext)
-      if (!transcoded && transcodeEnabled.value) {
+      const canPlayDirect = directPlayExts.includes(ext)
+      let transcoded = canPlayDirect
+      if (!canPlayDirect && transcodeEnabled.value) {
         try {
           const sRes = await getTranscodeStatus(f.id)
           const status = sRes.data.status || 'none'
@@ -151,7 +153,7 @@ async function loadFolder() {
           transcoded = status === 'done'
         } catch { /* ignore */ }
       }
-      vids.push({ id: f.id, name: f.name, transcoded })
+      vids.push({ id: f.id, name: f.name, transcoded, canPlayDirect })
     }
     // Sort by name
     vids.sort((a, b) => a.name.localeCompare(b.name))
@@ -285,7 +287,7 @@ async function autoTranscodeNextEpisode(currentFileId: string) {
   const idx = videoFiles.value.findIndex(f => f.id === currentFileId)
   if (idx < 0 || idx >= videoFiles.value.length - 1) return
   const next = videoFiles.value[idx + 1]
-  if (!next || directPlayExts.includes(getExt(next.name))) return
+  if (!next || next.canPlayDirect) return
   const status = transcodeStatuses.value[next.id] || 'none'
   if (status !== 'none') return
 

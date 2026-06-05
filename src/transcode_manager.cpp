@@ -125,16 +125,16 @@ bool TranscodeManager::cancel(const std::string& file_id) {
     // Remove from tasks
     tasks_.erase(it);
 
-    // Clean up partial cache file
+    // Clean up cache directory
     std::error_code ec;
-    fs::remove(cache_path, ec);
+    fs::remove_all(fs::path(cache_path).parent_path(), ec);
 
     return true;
 }
 
 bool TranscodeManager::delete_cache(const std::string& cache_path) {
     std::error_code ec;
-    return fs::remove(cache_path, ec);
+    return fs::remove_all(fs::path(cache_path).parent_path(), ec) > 0;
 }
 
 bool TranscodeManager::cache_exists(const std::string& cache_path) {
@@ -269,7 +269,7 @@ void TranscodeManager::run_task(TranscodeTask& task) {
         task.error = "ffmpeg exited with code " + std::to_string(exit_code);
         std::cerr << "[Transcode] " << task.file_id << " FAILED: exit code " << exit_code << std::endl;
         std::error_code ec;
-        fs::remove(task.cache_path, ec);
+        fs::remove_all(fs::path(task.cache_path).parent_path(), ec);
     } else {
         task.status = TaskStatus::Done;
         std::cout << "[Transcode] " << task.file_id << " DONE" << std::endl;
@@ -280,7 +280,7 @@ void TranscodeManager::run_task(TranscodeTask& task) {
         task.status = TaskStatus::Failed;
         task.error = "ffmpeg exited with code " + std::to_string(ret);
         std::error_code ec;
-        fs::remove(task.cache_path, ec);
+        fs::remove_all(fs::path(task.cache_path).parent_path(), ec);
     } else {
         task.status = TaskStatus::Done;
     }
