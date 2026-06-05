@@ -37,6 +37,12 @@ const router = createRouter({
       name: 'play-history',
       component: () => import('../views/PlayHistoryView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/play/:folderId/:fileId',
+      name: 'play',
+      component: () => import('../views/PlayView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

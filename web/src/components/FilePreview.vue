@@ -33,24 +33,6 @@
         <div v-else-if="isAudio" class="preview-audio">
           <audio :src="previewUrl" controls autoplay></audio>
         </div>
-        <!-- Video -->
-        <div v-else-if="isVideo" class="preview-video">
-          <div class="video-toolbar">
-            <span class="skip-label">Skip Intro:</span>
-            <button class="skip-btn" @click="adjustSkip('intro', -5)">-5s</button>
-            <span class="skip-value">{{ skipIntroVal }}s</span>
-            <button class="skip-btn" @click="adjustSkip('intro', 5)">+5s</button>
-            <span class="skip-sep">|</span>
-            <span class="skip-label">Skip Outro:</span>
-            <button class="skip-btn" @click="adjustSkip('outro', -5)">-5s</button>
-            <span class="skip-value">{{ skipOutroVal }}s</span>
-            <button class="skip-btn" @click="adjustSkip('outro', 5)">+5s</button>
-          </div>
-          <video ref="videoRef" :src="videoUrl" controls autoplay
-                 @loadedmetadata="onVideoLoaded"
-                 @timeupdate="onTimeUpdate"
-                 @ended="onVideoEnded"></video>
-        </div>
         <!-- Text -->
         <pre v-else-if="isText" class="preview-text">{{ textContent }}</pre>
         <!-- Unsupported -->
@@ -64,17 +46,11 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { getPreviewUrl, getTranscodeStreamUrl } from '../api'
+import { getPreviewUrl } from '../api'
 
 interface ImageFile {
   id: string
   name: string
-}
-
-interface VideoFile {
-  id: string
-  name: string
-  transcoded: boolean
 }
 
 const props = defineProps<{
@@ -82,27 +58,14 @@ const props = defineProps<{
   fileId: string
   fileName: string
   imageFiles?: ImageFile[]
-  transcoded?: boolean
-  videoFiles?: VideoFile[]
-  folderId?: string
-  progressThreshold?: number
-  initialTime?: number
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'navigate', id: string, name: string): void
-  (e: 'playNext', fileId: string, fileName: string, transcoded: boolean): void
-  (e: 'progressUpdate', folderId: string, fileId: string, position: number, duration: number): void
 }>()
 
 const textContent = ref('')
-
-// Video playback state
-const videoRef = ref<HTMLVideoElement | null>(null)
-const skipIntroVal = ref(0)
-const skipOutroVal = ref(0)
-let lastProgressEmit = 0
 
 // Zoom & Pan state
 const scale = ref(1)
@@ -136,11 +99,9 @@ const ext = computed(() => {
 
 const isImage = computed(() => ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'bmp', 'webp'].includes(ext.value))
 const isAudio = computed(() => ['mp3', 'wav', 'ogg', 'flac', 'aac'].includes(ext.value))
-const isVideo = computed(() => props.transcoded || ['mp4'].includes(ext.value))
 const isText = computed(() => ['txt', 'text', 'json', 'js', 'css', 'html', 'htm', 'xml', 'md', 'csv', 'log', 'ini', 'conf', 'yml', 'yaml', 'sh', 'bat', 'py', 'java', 'c', 'cpp', 'h', 'hpp'].includes(ext.value))
 
 const previewUrl = computed(() => getPreviewUrl(props.fileId))
-const videoUrl = computed(() => props.transcoded ? getTranscodeStreamUrl(props.fileId) : getPreviewUrl(props.fileId))
 
 // Zoom methods
 function zoomIn() {
@@ -223,50 +184,6 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-// Video playback methods
-function onVideoLoaded() {
-  if (videoRef.value && props.initialTime && props.initialTime > 0) {
-    videoRef.value.currentTime = props.initialTime
-  }
-  if (videoRef.value && skipIntroVal.value > 0 && videoRef.value.currentTime < skipIntroVal.value) {
-    videoRef.value.currentTime = skipIntroVal.value
-  }
-}
-
-function onTimeUpdate() {
-  if (!videoRef.value || !props.folderId) return
-  const video = videoRef.value
-  const now = Date.now()
-  if (now - lastProgressEmit >= 5000) {
-    lastProgressEmit = now
-    emit('progressUpdate', props.folderId, props.fileId, video.currentTime, video.duration)
-  }
-  // Skip outro
-  if (skipOutroVal.value > 0 && video.duration > 0 && (video.duration - video.currentTime) <= skipOutroVal.value) {
-    playNextEpisode()
-  }
-}
-
-function onVideoEnded() {
-  playNextEpisode()
-}
-
-function playNextEpisode() {
-  if (!props.videoFiles || props.videoFiles.length === 0) return
-  const idx = props.videoFiles.findIndex(f => f.id === props.fileId)
-  if (idx < 0 || idx >= props.videoFiles.length - 1) return
-  const next = props.videoFiles[idx + 1]
-  emit('playNext', next.id, next.name, next.transcoded)
-}
-
-function adjustSkip(type: 'intro' | 'outro', delta: number) {
-  if (type === 'intro') {
-    skipIntroVal.value = Math.max(0, skipIntroVal.value + delta)
-  } else {
-    skipOutroVal.value = Math.max(0, skipOutroVal.value + delta)
-  }
-}
-
 watch(() => props.visible, async (val) => {
   if (val) {
     document.addEventListener('keydown', onKeyDown)
@@ -285,11 +202,9 @@ watch(() => props.visible, async (val) => {
   }
 })
 
-// Reset transform on image navigation, reset video state on file change
+// Reset transform on image navigation
 watch(() => props.fileId, () => {
   resetTransform()
-  lastProgressEmit = 0
-  // Don't reset skip values - they are session-wide preferences
 })
 
 function close() {
@@ -454,47 +369,6 @@ function close() {
 .preview-audio audio {
   width: 80%;
   min-width: 300px;
-}
-.preview-video {
-  width: 100%;
-  text-align: center;
-  padding: 1rem 0;
-}
-.preview-video video {
-  max-width: 100%;
-  max-height: 70vh;
-  background: #000;
-}
-.video-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0.5rem 0;
-  font-size: 0.85rem;
-  color: #555;
-}
-.skip-label {
-  font-weight: 500;
-  margin-left: 0.3rem;
-}
-.skip-btn {
-  background: #f0f0f0;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 0.15rem 0.5rem;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-.skip-btn:hover { background: #e0e0e0; }
-.skip-value {
-  min-width: 2.5rem;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.skip-sep {
-  margin: 0 0.3rem;
-  color: #ccc;
 }
 .preview-text {
   width: 100%;

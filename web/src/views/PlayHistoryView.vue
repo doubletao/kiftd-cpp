@@ -105,7 +105,8 @@ function formatTime(seconds: number): string {
 }
 
 function resume(rec: HistoryRecord) {
-  router.push({ path: `/folder/${rec.folder_id}`, query: { play: rec.file_id } })
+  const t = rec.position > 0 ? `?t=${Math.floor(rec.position)}` : ''
+  router.push(`/play/${rec.folder_id}/${rec.file_id}${t}`)
 }
 
 async function remove(folderId: string) {
