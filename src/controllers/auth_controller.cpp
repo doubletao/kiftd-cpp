@@ -78,7 +78,7 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
         g_fail_map.erase(ip);
 
         crow::response res(200, R"({"ok":true})");
-        res.add_header("Set-Cookie", "kiftd_user=" + username + "; Path=/; HttpOnly; SameSite=Lax");
+        res.add_header("Set-Cookie", "kiftd_user=" + username + "; Path=/; HttpOnly");
         return res;
     });
 
