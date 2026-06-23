@@ -94,6 +94,7 @@
             <td class="actions-cell">
               <button v-if="canPreview(file.name)" class="btn-sm" @click="openPreview(file.id, file.name)">Preview</button>
               <button v-if="canPlayDirect(file.name)" class="btn-sm btn-play" @click="openVideoPreview(file.id, file.name, false)">Play</button>
+              <button v-if="canTranscode(file.name) && getTranscodeStatusForFile(file.id) === 'none'" class="btn-sm btn-play" @click="openVideoPreview(file.id, file.name, false)">Play</button>
               <button v-if="canTranscode(file.name) && getTranscodeStatusForFile(file.id) === 'none'" class="btn-sm btn-transcode" @click="openTranscodeDialog(file)">Transcode</button>
               <button v-if="getTranscodeStatusForFile(file.id) === 'pending'" class="btn-sm btn-cancel" @click="cancelTranscode(file.id)">Queued ✕</button>
               <button v-if="getTranscodeStatusForFile(file.id) === 'transcoding'" class="btn-sm btn-cancel" @click="cancelTranscode(file.id)">Transcoding ✕</button>

@@ -74,6 +74,22 @@ export const deleteTranscode = (id: string) => api.delete(`/files/${id}/transcod
 
 export const getTranscodeStreamUrl = (id: string) => `/api/files/${id}/transcode/stream`
 
+export const getLiveStreamUrl = (id: string, audioIndex?: number, subtitleIndex?: number, preset?: string) => {
+  const params = new URLSearchParams()
+  if (audioIndex !== undefined) params.set('audio', String(audioIndex))
+  if (subtitleIndex !== undefined) params.set('subtitle', String(subtitleIndex))
+  if (preset) params.set('preset', preset)
+  const qs = params.toString()
+  return `/api/files/${id}/live${qs ? '?' + qs : ''}`
+}
+
+export const startLiveSession = (id: string, audioIndex: number, subtitleIndex: number, preset: string, externalSubtitlePath?: string) =>
+  api.post(`/files/${id}/live/start`, { audio_index: audioIndex, subtitle_index: subtitleIndex, preset, external_subtitle_path: externalSubtitlePath || '' })
+
+export const getLivePlaylistUrl = (id: string) => `/api/files/${id}/live.m3u8`
+
+export const getLiveStatus = (id: string) => api.get(`/files/${id}/live/status`)
+
 export const getTranscodeTasks = () => api.get('/transcode/tasks')
 
 export const reorderTranscodeTask = (fileId: string, direction: number) =>

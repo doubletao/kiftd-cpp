@@ -11,8 +11,28 @@
       </div>
     </div>
 
+    <!-- Choice overlay for non-MP4 without cache -->
+    <div v-if="showChoiceOverlay" class="choice-overlay">
+      <div class="choice-box">
+        <div class="choice-file-name">{{ currentFileName }}</div>
+        <p class="choice-hint">This video has not been transcoded. Choose a play mode:</p>
+        <div class="choice-actions">
+          <button class="btn-choice btn-play" @click="startLivePlay">
+            &#9654; Play
+          </button>
+          <button class="btn-choice btn-cache" @click="startCache">
+            &#9881; Cache
+          </button>
+        </div>
+        <div class="choice-desc">
+          <div class="desc-item"><strong>Play</strong>: Stream directly, start watching immediately</div>
+          <div class="desc-item"><strong>Cache</strong>: Transcode to local cache for smoother playback</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Video player -->
-    <div class="video-container">
+    <div v-show="!showChoiceOverlay" class="video-container">
       <video ref="videoRef" :src="videoUrl" controls autoplay
              @loadedmetadata="onLoadedMetadata"
              @timeupdate="onTimeUpdate"
@@ -20,7 +40,7 @@
     </div>
 
     <!-- Bottom bar -->
-    <div class="bottom-bar">
+    <div v-show="!showChoiceOverlay" class="bottom-bar">
       <div class="skip-controls">
         <span class="skip-label">Skip Intro:</span>
         <button class="skip-btn" @click="adjustSkip('intro', -5)">-5s</button>
@@ -34,26 +54,29 @@
       </div>
       <div class="progress-info" v-if="videoRef">
         <span>{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
+        <span v-if="playMode === 'live'" class="live-tag">LIVE</span>
       </div>
     </div>
 
-    <!-- Transcode confirm dialog -->
-    <div v-if="showTranscodeConfirm" class="modal-overlay" @click.self="showTranscodeConfirm = false">
-      <div class="modal-box">
-        <p>{{ transcodeConfirmMsg }}</p>
-        <div class="modal-actions">
-          <button v-if="transcodeConfirmCanSubmit" class="btn-primary" @click="confirmTranscode">Transcode Now</button>
-          <button class="btn-secondary" @click="showTranscodeConfirm = false">Later</button>
-        </div>
-      </div>
-    </div>
+    <!-- Transcode confirm dialog (for Cache action) -->
+    <TranscodeDialog
+      :visible="showTranscodeDialog"
+      :file-id="transcodeDialogFileId"
+      :file-name="transcodeDialogFileName"
+      :presets="transcodePresets"
+      :profile-name="transcodeProfileName"
+      @close="showTranscodeDialog = false"
+      @submit="handleTranscodeSubmit"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getFolder, getTranscodeConfig, getTranscodeStatus, submitTranscode, getPlayHistory, updatePlayHistory, deletePlayHistory, getTranscodeStreamUrl, getPreviewUrl } from '../api'
+import Hls from 'hls.js'
+import { getFolder, getTranscodeConfig, getTranscodeStatus, submitTranscode, getPlayHistory, updatePlayHistory, deletePlayHistory, getTranscodeStreamUrl, getPreviewUrl, startLiveSession, getLivePlaylistUrl } from '../api'
+import TranscodeDialog from '../components/TranscodeDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,6 +92,11 @@ interface VideoFile {
   canPlayDirect: boolean
 }
 
+// Play mode: 'direct' = MP4, 'cached' = transcoded cache, 'live' = 边转边播
+type PlayMode = 'direct' | 'cached' | 'live' | null
+
+let hlsInstance: Hls | null = null
+
 const folderId = computed(() => route.params.folderId as string)
 const fileId = computed(() => route.params.fileId as string)
 
@@ -78,6 +106,7 @@ const transcodeStatuses = ref<Record<string, string>>({})
 const playProgressThreshold = ref(90)
 const autoTranscodeNext = ref(false)
 const transcodeEnabled = ref(false)
+const playMode = ref<PlayMode>(null)
 
 // Skip controls (session only)
 const skipIntroVal = ref(0)
@@ -88,12 +117,6 @@ const currentTime = ref(0)
 const duration = ref(0)
 let lastProgressEmit = 0
 
-// Transcode confirm dialog
-const showTranscodeConfirm = ref(false)
-const transcodeConfirmMsg = ref('')
-const transcodeConfirmCanSubmit = ref(false)
-let pendingSwitchIndex = -1
-
 // Play history
 interface PlayHistoryItem {
   folder_id: string; file_id: string; position: number; duration: number
@@ -101,10 +124,26 @@ interface PlayHistoryItem {
 }
 const playHistoryRecord = ref<PlayHistoryItem | null>(null)
 
+// Transcode dialog state
+const showTranscodeDialog = ref(false)
+const transcodeDialogFileId = ref('')
+const transcodeDialogFileName = ref('')
+const transcodePresets = ref<Record<string, { resolution: number; crf: number; preset: string }>>({})
+const transcodeProfileName = ref('')
+
 const currentIndex = computed(() => videoFiles.value.findIndex(f => f.id === fileId.value))
 const currentFileName = computed(() => {
   const f = videoFiles.value.find(f => f.id === fileId.value)
   return f ? f.name : ''
+})
+
+const currentFile = computed(() => videoFiles.value.find(f => f.id === fileId.value))
+
+// Show choice overlay when: non-MP4, no cache, and user hasn't chosen live mode yet
+const showChoiceOverlay = computed(() => {
+  const f = currentFile.value
+  if (!f) return false
+  return !f.canPlayDirect && !f.transcoded && playMode.value !== 'live'
 })
 
 function getExt(name: string): string {
@@ -113,9 +152,12 @@ function getExt(name: string): string {
 }
 
 const videoUrl = computed(() => {
-  const f = videoFiles.value.find(f => f.id === fileId.value)
+  const f = currentFile.value
   if (!f) return ''
-  return f.canPlayDirect ? getPreviewUrl(f.id) : getTranscodeStreamUrl(f.id)
+  if (f.canPlayDirect) return getPreviewUrl(f.id)
+  if (f.transcoded) return getTranscodeStreamUrl(f.id)
+  // For live mode, hls.js handles the source directly
+  return ''
 })
 
 function formatTime(seconds: number): string {
@@ -133,6 +175,10 @@ async function loadFolder() {
     transcodeEnabled.value = cfg.enabled || false
     playProgressThreshold.value = cfg.play_progress_threshold || 90
     autoTranscodeNext.value = cfg.auto_transcode_next || false
+
+    // Load presets for TranscodeDialog
+    if (cfg.presets) transcodePresets.value = cfg.presets
+    if (cfg.profile) transcodeProfileName.value = cfg.profile
 
     // Load folder files
     const res = await getFolder(folderId.value)
@@ -166,10 +212,109 @@ async function loadFolder() {
       if (record) playHistoryRecord.value = record
     } catch { /* ignore */ }
 
-    // Auto-transcode next episode
-    autoTranscodeNextEpisode(fileId.value)
+    // Determine initial play mode
+    const current = vids.find(f => f.id === fileId.value)
+    if (current) {
+      if (current.canPlayDirect) {
+        playMode.value = 'direct'
+      } else if (current.transcoded) {
+        playMode.value = 'cached'
+      } else {
+        playMode.value = null  // show choice overlay
+      }
+    }
+
+    // Auto-transcode next episode (only for cached/direct mode, not live)
+    if (playMode.value !== null && playMode.value !== 'live') {
+      autoTranscodeNextEpisode(fileId.value)
+    }
   } catch (e: any) {
     if (e.response?.status === 401) router.push('/login')
+  }
+}
+
+async function startLivePlay() {
+  const f = currentFile.value
+  if (!f) return
+
+  // Start live session on server
+  const rec = playHistoryRecord.value
+  const preset = rec?.preset || 'fast'
+  const audioIdx = rec?.audio_index ?? 0
+  const subtitleIdx = rec?.subtitle_index ?? -1
+  const extSubPath = rec?.external_subtitle_path || ''
+
+  try {
+    await startLiveSession(f.id, audioIdx, subtitleIdx, preset, extSubPath)
+  } catch (e: any) {
+    alert('Failed to start live session: ' + (e.response?.data?.error || e.message))
+    return
+  }
+
+  playMode.value = 'live'
+
+  // Wait for DOM update, then attach hls.js
+  await nextTick()
+  const video = videoRef.value
+  if (!video) return
+
+  const playlistUrl = getLivePlaylistUrl(f.id)
+
+  if (Hls.isSupported()) {
+    hlsInstance = new Hls({
+      liveSyncDuration: 3,
+      liveMaxLatencyDuration: 10,
+      maxBufferLength: 10,
+      maxMaxBufferLength: 30,
+    })
+    hlsInstance.loadSource(playlistUrl)
+    hlsInstance.attachMedia(video)
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().catch(() => {})
+    })
+    hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+      if (data.fatal) {
+        console.error('[HLS] fatal error:', data.type, data.details)
+      }
+    })
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    // Safari native HLS support
+    video.src = playlistUrl
+    video.addEventListener('loadedmetadata', () => {
+      video.play().catch(() => {})
+    })
+  }
+}
+
+function startCache() {
+  const f = currentFile.value
+  if (!f) return
+  transcodeDialogFileId.value = f.id
+  transcodeDialogFileName.value = f.name
+  showTranscodeDialog.value = true
+}
+
+async function handleTranscodeSubmit(preset: string, audioIndex: number, subtitleIndex: number, externalSubtitlePath: string) {
+  showTranscodeDialog.value = false
+  const f = currentFile.value
+  if (!f) return
+
+  try {
+    await submitTranscode(f.id, preset, audioIndex, subtitleIndex, externalSubtitlePath)
+    transcodeStatuses.value[f.id] = 'pending'
+    // Update play history with transcode params
+    try {
+      await updatePlayHistory(folderId.value, f.id, 0, 0, preset, audioIndex, subtitleIndex, externalSubtitlePath)
+      playHistoryRecord.value = {
+        folder_id: folderId.value,
+        file_id: f.id,
+        position: 0, duration: 0,
+        preset, audio_index: audioIndex, subtitle_index: subtitleIndex,
+        external_subtitle_path: externalSubtitlePath
+      }
+    } catch { /* ignore */ }
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Transcode submit failed')
   }
 }
 
@@ -230,55 +375,16 @@ function switchEpisode(direction: number) {
 
   const target = videoFiles.value[newIdx]
 
-  // Already transcoded or direct play? Navigate
-  if (target.transcoded) {
-    navigateToFile(target.id)
-    return
-  }
-
-  // Check transcode status
-  const status = transcodeStatuses.value[target.id] || 'none'
-  if (status === 'transcoding' || status === 'pending') {
-    transcodeConfirmMsg.value = `"${target.name}" is being transcoded, please wait.`
-    transcodeConfirmCanSubmit.value = false
-    showTranscodeConfirm.value = true
-    return
-  }
-
-  // Not transcoded - ask user
-  pendingSwitchIndex = newIdx
-  transcodeConfirmMsg.value = `"${target.name}" has not been transcoded yet. Transcode now?`
-  transcodeConfirmCanSubmit.value = true
-  showTranscodeConfirm.value = true
-}
-
-async function confirmTranscode() {
-  showTranscodeConfirm.value = false
-  if (pendingSwitchIndex < 0) return
-
-  const target = videoFiles.value[pendingSwitchIndex]
-  if (!target) return
-
-  // Use saved params from play history
-  const rec = playHistoryRecord.value
-  const preset = rec?.preset || 'fast'
-  const audioIdx = rec?.audio_index ?? 0
-  const subtitleIdx = rec?.subtitle_index ?? -1
-  const extSubPath = rec?.external_subtitle_path || ''
-
-  try {
-    await submitTranscode(target.id, preset, audioIdx, subtitleIdx, extSubPath)
-    transcodeStatuses.value[target.id] = 'pending'
-  } catch { /* ignore */ }
-
-  pendingSwitchIndex = -1
-}
-
-function navigateToFile(id: string) {
   // Save current progress before switching
   if (videoRef.value && videoRef.value.duration > 0) {
     updatePlayHistory(folderId.value, fileId.value, videoRef.value.currentTime, videoRef.value.duration).catch(() => {})
   }
+
+  // Navigate - the loadFolder will determine play mode for the new file
+  navigateToFile(target.id)
+}
+
+function navigateToFile(id: string) {
   router.push(`/play/${folderId.value}/${id}`)
 }
 
@@ -355,14 +461,25 @@ onUnmounted(() => {
   if (videoRef.value && videoRef.value.duration > 0) {
     updatePlayHistory(folderId.value, fileId.value, videoRef.value.currentTime, videoRef.value.duration).catch(() => {})
   }
+  // Destroy hls instance
+  if (hlsInstance) {
+    hlsInstance.destroy()
+    hlsInstance = null
+  }
 })
 
 // Reload when navigating between episodes
 watch(() => route.params.fileId, (newId, oldId) => {
   if (newId && newId !== oldId) {
+    // Clean up previous hls instance
+    if (hlsInstance) {
+      hlsInstance.destroy()
+      hlsInstance = null
+    }
     lastProgressEmit = 0
     currentTime.value = 0
     duration.value = 0
+    playMode.value = null
     loadFolder()
   }
 })
@@ -477,51 +594,83 @@ watch(() => route.params.fileId, (newId, oldId) => {
   font-size: 0.85rem;
   color: #aaa;
   font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.6);
+.live-tag {
+  background: #e74c3c;
+  color: #fff;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Choice overlay */
+.choice-overlay {
+  flex: 1;
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 100;
+  background: #0a0a0a;
 }
-.modal-box {
-  background: #222;
-  border-radius: 8px;
-  padding: 1.5rem;
-  min-width: 300px;
-  max-width: 400px;
+.choice-box {
+  background: #1a1a1a;
+  border-radius: 12px;
+  padding: 2rem 2.5rem;
+  max-width: 420px;
+  text-align: center;
+  border: 1px solid #333;
 }
-.modal-box p {
-  margin: 0 0 1rem;
-  font-size: 0.95rem;
-  line-height: 1.5;
+.choice-file-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #eee;
+  margin-bottom: 0.5rem;
+  word-break: break-all;
 }
-.modal-actions {
+.choice-hint {
+  font-size: 0.9rem;
+  color: #999;
+  margin-bottom: 1.5rem;
+}
+.choice-actions {
   display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
+  gap: 1rem;
+  justify-content: center;
+  margin-bottom: 1.5rem;
 }
-.btn-primary {
+.btn-choice {
+  padding: 0.7rem 2rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+.btn-play {
   background: #4a9eff;
-  border: none;
   color: #fff;
-  padding: 0.4rem 1rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.85rem;
 }
-.btn-primary:hover { background: #3a8eef; }
-.btn-secondary {
-  background: #444;
-  border: none;
+.btn-play:hover { background: #3a8eef; }
+.btn-cache {
+  background: #555;
   color: #fff;
-  padding: 0.4rem 1rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.85rem;
 }
-.btn-secondary:hover { background: #555; }
+.btn-cache:hover { background: #666; }
+.choice-desc {
+  text-align: left;
+  font-size: 0.8rem;
+  color: #777;
+  line-height: 1.6;
+}
+.desc-item {
+  margin-bottom: 0.3rem;
+}
+.desc-item strong {
+  color: #aaa;
+}
 </style>

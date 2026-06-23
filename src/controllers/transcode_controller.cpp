@@ -4,6 +4,7 @@
 #include <sstream>
 #include <fstream>
 #include <iostream>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -161,7 +162,7 @@ static nlohmann::json find_external_subtitles_db(Database& db, FileStore& store,
 }
 
 void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& store,
-                                TranscodeManager& mgr, const Config& cfg) {
+                                TranscodeManager& mgr, LiveSessionManager& live_mgr, const Config& cfg) {
 
     // GET /api/config/transcode
     CROW_ROUTE(app, "/api/config/transcode")
@@ -473,6 +474,163 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
         res.add_header("Content-Type", "video/mp4");
         res.add_header("Accept-Ranges", "bytes");
         return res;
+    });
+
+    // POST /api/files/<string>/live/start - start HLS live session
+    CROW_ROUTE(app, "/api/files/<string>/live/start")
+        .methods("POST"_method)
+    ([&db, &store, &live_mgr, &cfg](const crow::request& req, const std::string& file_id) {
+        std::string user = get_user(req);
+        if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
+
+        if (cfg.ffmpeg_path.empty()) {
+            return crow::response(400, R"({"error":"ffmpeg not configured"})");
+        }
+
+        auto file = db.get_file(file_id);
+        if (file.id.empty()) return crow::response(404, R"({"error":"file not found"})");
+
+        std::string input_path = store.get_path(file.disk_name);
+        if (!fs::exists(input_path)) return crow::response(404, R"({"error":"file missing"})");
+
+        // Parse body params
+        auto body = nlohmann::json::parse(req.body, nullptr, false);
+        int audio_index = body.value("audio_index", 0);
+        int subtitle_index = body.value("subtitle_index", -1);
+        std::string external_subtitle_path = body.value("external_subtitle_path", "");
+        std::string preset_name = body.value("preset", "fast");
+
+        live_mgr.start_session(file_id, input_path, audio_index, subtitle_index,
+                                external_subtitle_path, preset_name);
+
+        return crow::response(200, R"({"ok":true})");
+    });
+
+    // GET /api/files/<string>/live.m3u8 - serve HLS playlist
+    CROW_ROUTE(app, "/api/files/<string>/live.m3u8")
+        .methods("GET"_method)
+    ([&live_mgr](const crow::request& req, const std::string& file_id) {
+        std::string user = get_user(req);
+        if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
+
+        std::string session_dir = live_mgr.get_session_dir(file_id);
+        if (session_dir.empty()) {
+            return crow::response(404, R"({"error":"no live session"})");
+        }
+
+        std::string playlist_path = session_dir + "/playlist.m3u8";
+
+        // Wait for playlist to be created (up to 15 seconds)
+        for (int i = 0; i < 150; i++) {
+            if (fs::exists(playlist_path) && fs::file_size(playlist_path) > 0) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        if (!fs::exists(playlist_path) || fs::file_size(playlist_path) == 0) {
+            return crow::response(500, R"({"error":"playlist not ready"})");
+        }
+
+        // Read playlist and rewrite segment URLs to our API paths
+        std::ifstream ifs(playlist_path);
+        std::string content((std::istreambuf_iterator<char>(ifs)),
+                             std::istreambuf_iterator<char>());
+
+        // Rewrite all segment references to our API endpoint
+        std::string prefix = "/api/files/" + file_id + "/live/segment/";
+        std::string result;
+        std::istringstream stream(content);
+        std::string line;
+        while (std::getline(stream, line)) {
+            if (line.empty()) {
+                result += line + "\n";
+            }
+            // Rewrite URI="filename" inside HLS tags (e.g. #EXT-X-MAP:URI="init.mp4")
+            else if (line[0] == '#') {
+                auto uri_pos = line.find("URI=\"");
+                if (uri_pos != std::string::npos) {
+                    auto start = uri_pos + 5; // after URI="
+                    auto end = line.find('"', start);
+                    if (end != std::string::npos) {
+                        std::string uri = line.substr(start, end - start);
+                        // Only rewrite relative paths (not absolute URLs)
+                        if (uri.find("http://") != 0 && uri.find("https://") != 0 && uri[0] != '/') {
+                            result += line.substr(0, start) + prefix + uri + line.substr(end) + "\n";
+                        } else {
+                            result += line + "\n";
+                        }
+                    } else {
+                        result += line + "\n";
+                    }
+                } else {
+                    result += line + "\n";
+                }
+            }
+            // Rewrite segment filenames (non-comment, non-absolute lines)
+            else if (line.find("http://") == 0 || line.find("https://") == 0 || line[0] == '/') {
+                result += line + "\n";
+            } else {
+                result += prefix + line + "\n";
+            }
+        }
+
+        std::cout << "[Live] playlist content:\n" << result << std::endl;
+
+        crow::response res;
+        res.body = result;
+        res.add_header("Content-Type", "application/vnd.apple.mpegurl");
+        res.add_header("Cache-Control", "no-cache, no-store");
+        return res;
+    });
+
+    // GET /api/files/<string>/live/segment/<string> - serve HLS segment files
+    CROW_ROUTE(app, "/api/files/<string>/live/segment/<string>")
+        .methods("GET"_method)
+    ([&live_mgr](const crow::request& req, const std::string& file_id, const std::string& seg_name) {
+        std::string user = get_user(req);
+        if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
+
+        std::string session_dir = live_mgr.get_session_dir(file_id);
+        if (session_dir.empty()) {
+            return crow::response(404, R"({"error":"no live session"})");
+        }
+
+        std::string seg_path = session_dir + "/" + seg_name;
+
+        // Wait for segment to be available (up to 30 seconds)
+        for (int i = 0; i < 300; i++) {
+            if (fs::exists(seg_path) && fs::file_size(seg_path) > 0) break;
+            // If session is finished and segment doesn't exist, it won't appear
+            if (!live_mgr.is_active(file_id) && !fs::exists(seg_path)) {
+                return crow::response(404, R"({"error":"segment not found"})");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        if (!fs::exists(seg_path) || fs::file_size(seg_path) == 0) {
+            return crow::response(404, R"({"error":"segment not available"})");
+        }
+
+        crow::response res;
+        res.set_static_file_info(seg_path);
+        res.add_header("Content-Type", "video/mp4");
+        res.add_header("Cache-Control", "no-store");
+        return res;
+    });
+
+    // GET /api/files/<string>/live/status - check live session status
+    CROW_ROUTE(app, "/api/files/<string>/live/status")
+        .methods("GET"_method)
+    ([&live_mgr](const crow::request& req, const std::string& file_id) {
+        std::string user = get_user(req);
+        if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
+
+        bool active = live_mgr.is_active(file_id);
+        std::string session_dir = live_mgr.get_session_dir(file_id);
+
+        nlohmann::json j;
+        j["active"] = active;
+        j["ready"] = !session_dir.empty() && fs::exists(session_dir + "/playlist.m3u8");
+        return crow::response(200, j.dump());
     });
 }
 
