@@ -75,7 +75,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
-import { getFolder, getTranscodeConfig, getTranscodeStatus, submitTranscode, getPlayHistory, updatePlayHistory, deletePlayHistory, getTranscodeStreamUrl, getPreviewUrl, startLiveSession, getLivePlaylistUrl } from '../api'
+import { getFolder, getTranscodeConfig, getTranscodeStatus, submitTranscode, getPlayHistory, updatePlayHistory, deletePlayHistory, getTranscodeStreamUrl, getPreviewUrl, startLiveSession, getLivePlaylistUrl, cancelLiveSession } from '../api'
 import TranscodeDialog from '../components/TranscodeDialog.vue'
 
 const route = useRoute()
@@ -96,6 +96,7 @@ interface VideoFile {
 type PlayMode = 'direct' | 'cached' | 'live' | null
 
 let hlsInstance: Hls | null = null
+let currentLiveFileId: string | null = null  // saved for cleanup on unmount
 
 const folderId = computed(() => route.params.folderId as string)
 const fileId = computed(() => route.params.fileId as string)
@@ -252,6 +253,7 @@ async function startLivePlay() {
   }
 
   playMode.value = 'live'
+  currentLiveFileId = f.id
 
   // Wait for DOM update, then attach hls.js
   await nextTick()
@@ -380,6 +382,11 @@ function switchEpisode(direction: number) {
     updatePlayHistory(folderId.value, fileId.value, videoRef.value.currentTime, videoRef.value.duration).catch(() => {})
   }
 
+  // Cancel live session before switching
+  if (playMode.value === 'live') {
+    cancelLiveSession(fileId.value).catch(() => {})
+  }
+
   // Navigate - the loadFolder will determine play mode for the new file
   navigateToFile(target.id)
 }
@@ -466,6 +473,10 @@ onUnmounted(() => {
     hlsInstance.destroy()
     hlsInstance = null
   }
+  // Cancel live session on server (kills ffmpeg)
+  if (playMode.value === 'live' && currentLiveFileId) {
+    cancelLiveSession(currentLiveFileId).catch(() => {})
+  }
 })
 
 // Reload when navigating between episodes
@@ -476,6 +487,11 @@ watch(() => route.params.fileId, (newId, oldId) => {
       hlsInstance.destroy()
       hlsInstance = null
     }
+    // Cancel live session for previous file
+    if (playMode.value === 'live' && currentLiveFileId) {
+      cancelLiveSession(currentLiveFileId).catch(() => {})
+    }
+    currentLiveFileId = null
     lastProgressEmit = 0
     currentTime.value = 0
     duration.value = 0

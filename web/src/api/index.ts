@@ -90,6 +90,8 @@ export const getLivePlaylistUrl = (id: string) => `/api/files/${id}/live.m3u8`
 
 export const getLiveStatus = (id: string) => api.get(`/files/${id}/live/status`)
 
+export const cancelLiveSession = (id: string) => api.delete(`/files/${id}/live`)
+
 export const getTranscodeTasks = () => api.get('/transcode/tasks')
 
 export const reorderTranscodeTask = (fileId: string, direction: number) =>
