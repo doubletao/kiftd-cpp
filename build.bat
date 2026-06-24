@@ -54,3 +54,5 @@ echo  Done! Output: bin\
 echo ==============================
 
 endlocal
+
+pause
