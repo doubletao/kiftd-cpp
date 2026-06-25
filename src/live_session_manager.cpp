@@ -5,6 +5,7 @@
 #include <regex>
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <windows.h>
 #include <stringapiset.h>
 #endif
@@ -44,13 +45,17 @@ LiveSessionManager::LiveSessionManager(const Config& cfg)
 }
 
 LiveSessionManager::~LiveSessionManager() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& [id, session] : sessions_) {
-        kill_ffmpeg_locked(id);
-        std::error_code ec;
-        fs::remove_all(session->session_dir, ec);
+    shutting_down_ = true;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& [id, session] : sessions_) {
+            kill_ffmpeg_locked(id);
+            std::error_code ec;
+            fs::remove_all(session->session_dir, ec);
+        }
+        sessions_.clear();
     }
-    sessions_.clear();
+    std::this_thread::sleep_for(std::chrono::seconds(2));
 }
 
 double LiveSessionManager::get_duration(const std::string& input_path) {
@@ -115,55 +120,105 @@ double LiveSessionManager::get_duration(const std::string& input_path) {
     }
 }
 
+int LiveSessionManager::get_disk_progress_index(const std::string& session_dir, int min_index) const {
+    int max_index = min_index - 1;
+    std::error_code ec;
+    for (auto& entry : fs::directory_iterator(session_dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        std::string name = entry.path().filename().string();
+        if (name.size() > 7 && name.substr(0, 3) == "seg" && name.substr(name.size() - 4) == ".mp4") {
+            try {
+                int idx = std::stoi(name.substr(3, name.size() - 7));
+                if (idx >= min_index && idx > max_index) max_index = idx;
+            } catch (...) {}
+        }
+    }
+    return max_index;
+}
+
+bool LiveSessionManager::has_any_data_segment(const std::string& session_dir) const {
+    std::error_code ec;
+    for (auto& entry : fs::directory_iterator(session_dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        std::string name = entry.path().filename().string();
+        if (name.size() > 7 && name.substr(0, 3) == "seg" && name.substr(name.size() - 4) == ".mp4") {
+            try {
+                int idx = std::stoi(name.substr(3, name.size() - 7));
+                if (idx >= 0) return true;
+            } catch (...) {}
+        }
+    }
+    return false;
+}
+
 bool LiveSessionManager::ensure_segment(const std::string& file_id,
                                           const std::string& input_path,
                                           int segment_id, int segment_length_seconds,
                                           int audio_index, int subtitle_index,
                                           const std::string& external_subtitle_path,
                                           const std::string& preset_name) {
-    // --- Phase 1: Quick check without lock ---
+    if (shutting_down_) return false;
+
+    // Phase 1: quick check without lock
     std::error_code ec;
     std::string seg_path = get_segment_path(file_id, segment_id);
     if (fs::exists(seg_path, ec) && fs::file_size(seg_path, ec) > 0) {
         return true;
     }
 
-    // --- Phase 2: Decision phase (hold lock) ---
+    // Phase 2: decision phase (hold lock)
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // Double-check after acquiring lock
+        if (shutting_down_) return false;
+
         if (fs::exists(seg_path, ec) && fs::file_size(seg_path, ec) > 0) {
             return true;
         }
 
-        // Ensure session exists
         auto it = sessions_.find(file_id);
         if (it == sessions_.end()) {
             auto session = std::make_shared<Session>();
             session->file_id = file_id;
             session->session_dir = temp_base_dir_ + "/" + file_id;
             fs::create_directories(session->session_dir);
+            session->last_restart_time = std::chrono::steady_clock::now() -
+                std::chrono::milliseconds(RESTART_COOLDOWN_MS + 1000);
             sessions_[file_id] = session;
             it = sessions_.find(file_id);
         }
         auto& session = it->second;
 
-        // Decision logic using time-based progress estimation
         bool need_start = false;
 
         if (!session->ffmpeg_running) {
             need_start = true;
         } else if (segment_id == -1) {
-            // init.mp4 — ffmpeg will produce it, just wait
+            // init.mp4 - ffmpeg running will produce it, just wait
         } else if (segment_id < session->start_segment_id) {
-            // Backward seek
-            need_start = true;
+            // backward seek
+            auto ms_since_restart = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - session->last_restart_time).count();
+
+            if (ms_since_restart < RESTART_COOLDOWN_MS) {
+                // cooldown: stale request
+                std::cout << "[Live] " << file_id << " stale request for segment "
+                          << segment_id << " (ffmpeg at " << session->start_segment_id
+                          << ", cooldown " << ms_since_restart << "ms) - rejecting" << std::endl;
+                return false;
+            } else {
+                // cooldown expired: legitimate backward seek
+                need_start = true;
+            }
         } else {
-            // Estimate current progress from elapsed time
+            // forward seek check
             double elapsed = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - session->ffmpeg_start_time).count();
-            int estimated_current = session->start_segment_id + static_cast<int>(elapsed / session->segment_length);
+
+            int time_estimated = session->start_segment_id +
+                static_cast<int>(elapsed / session->segment_length);
+            int disk_progress = get_disk_progress_index(session->session_dir, session->start_segment_id);
+            int estimated_current = (std::max)(time_estimated, disk_progress);
 
             if (segment_id > estimated_current + SEEK_THRESHOLD) {
                 need_start = true;
@@ -181,53 +236,92 @@ bool LiveSessionManager::ensure_segment(const std::string& file_id,
             }
 
             session->start_segment_id = actual_start_segment;
+            session->last_restart_time = std::chrono::steady_clock::now();
 
             start_ffmpeg_locked(file_id, input_path, start_seconds, actual_start_segment,
                                 segment_length_seconds, audio_index, subtitle_index,
                                 external_subtitle_path, preset_name);
         }
     }
-    // Lock released
+    // lock released
 
-    // --- Phase 3: Wait for segment to be ready (no lock held) ---
-    std::string next_seg_path = get_segment_path(file_id, segment_id + 1);
+    // Phase 3: wait for segment (no lock)
+    for (int i = 0; i < 300; i++) {
+        if (shutting_down_) return false;
 
-    for (int i = 0; i < 300; i++) {  // up to 30 seconds
         std::error_code ec2;
         bool seg_exists = fs::exists(seg_path, ec2) && fs::file_size(seg_path, ec2) > 0;
+
         if (seg_exists) {
-            bool next_exists = fs::exists(next_seg_path, ec2) && fs::file_size(next_seg_path, ec2) > 0;
-            bool ffmpeg_done = false;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                auto it = sessions_.find(file_id);
-                if (it != sessions_.end()) {
+            if (segment_id == -1) {
+                // init.mp4 check
+                int start_seg = 0;
+                bool ffmpeg_done = false;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    auto it = sessions_.find(file_id);
+                    if (it == sessions_.end() || it->second->cancelled) return false;
+                    start_seg = it->second->start_segment_id;
                     ffmpeg_done = !it->second->ffmpeg_running;
                 }
-            }
-            if (next_exists || ffmpeg_done) {
-                return true;
+
+                if (ffmpeg_done) return true;
+
+                std::string first_seg = get_segment_path(file_id, start_seg);
+                if (fs::exists(first_seg, ec2) && fs::file_size(first_seg, ec2) > 0) {
+                    return true;
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    auto it = sessions_.find(file_id);
+                    if (it != sessions_.end()) {
+                        double since_start = std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - it->second->ffmpeg_start_time).count();
+                        if (since_start > 3.0 && has_any_data_segment(it->second->session_dir)) {
+                            return true;
+                        }
+                    }
+                }
+            } else {
+                // data segment check
+                std::string next_seg_path = get_segment_path(file_id, segment_id + 1);
+                bool next_exists = fs::exists(next_seg_path, ec2) && fs::file_size(next_seg_path, ec2) > 0;
+                bool ffmpeg_done = false;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    auto it = sessions_.find(file_id);
+                    if (it != sessions_.end()) {
+                        ffmpeg_done = !it->second->ffmpeg_running;
+                    }
+                }
+                if (next_exists || ffmpeg_done) {
+                    return true;
+                }
             }
         }
 
-        // Fast-fail checks
+        // fast-fail checks
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = sessions_.find(file_id);
             if (it == sessions_.end() || it->second->cancelled) {
                 return false;
             }
-            // ffmpeg exited but segment still missing → transcode failure
             if (!it->second->ffmpeg_running && !seg_exists) {
                 std::cerr << "[Live] " << file_id << " ffmpeg exited but segment "
                           << segment_id << " not produced" << std::endl;
                 return false;
             }
-            // Segment is before current ffmpeg start — another request restarted us
             if (segment_id >= 0 && segment_id < it->second->start_segment_id && !seg_exists) {
+                auto ms_since_restart = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - it->second->last_restart_time).count();
+                if (ms_since_restart < RESTART_COOLDOWN_MS) {
+                    return false;
+                }
                 std::cerr << "[Live] " << file_id << " segment " << segment_id
-                          << " is before ffmpeg start " << it->second->start_segment_id
-                          << " and doesn't exist" << std::endl;
+                          << " before ffmpeg start " << it->second->start_segment_id
+                          << " (post-cooldown)" << std::endl;
                 return false;
             }
         }
@@ -284,7 +378,6 @@ void LiveSessionManager::kill_ffmpeg_locked(const std::string& file_id) {
 #ifdef _WIN32
         if (session->process_handle) {
             TerminateProcess(session->process_handle, 1);
-            // Don't CloseHandle here — monitor thread owns it
             session->process_handle = nullptr;
         }
 #else
@@ -312,11 +405,9 @@ void LiveSessionManager::start_ffmpeg_locked(const std::string& file_id,
                                         audio_index, subtitle_index,
                                         external_subtitle_path, preset_name);
 
-    // Increment generation — stale monitors will see mismatch and no-op
     session->ffmpeg_generation++;
     uint64_t current_generation = session->ffmpeg_generation;
 
-    // Record start time and segment length for progress estimation
     session->ffmpeg_start_time = std::chrono::steady_clock::now();
     session->segment_length = segment_length;
 
@@ -347,9 +438,12 @@ void LiveSessionManager::start_ffmpeg_locked(const std::string& file_id,
     session->process_handle = pi.hProcess;
     session->ffmpeg_running = true;
 
-    // Monitor thread — just waits for exit and updates state. No pending restart.
     std::thread([this, file_id, process_handle = pi.hProcess, current_generation]() {
-        while (WaitForSingleObject(process_handle, 1000) == WAIT_TIMEOUT) {
+        while (WaitForSingleObject(process_handle, 500) == WAIT_TIMEOUT) {
+            if (shutting_down_) {
+                CloseHandle(process_handle);
+                return;
+            }
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = sessions_.find(file_id);
             if (it == sessions_.end() || it->second->cancelled) {
@@ -363,19 +457,19 @@ void LiveSessionManager::start_ffmpeg_locked(const std::string& file_id,
         GetExitCodeProcess(process_handle, &exit_code);
         CloseHandle(process_handle);
 
+        if (shutting_down_) return;
+
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = sessions_.find(file_id);
         if (it != sessions_.end()) {
             auto& session = it->second;
-
-            // Only update state if generation matches
             if (session->ffmpeg_generation == current_generation) {
                 session->process_handle = nullptr;
                 session->ffmpeg_running = false;
                 if (exit_code != 0) {
                     std::cerr << "[Live] " << file_id << " ffmpeg exited with code " << exit_code << std::endl;
                 } else {
-                    std::cout << "[Live] " << file_id << " ffmpeg finished" << std::endl;
+                    std::cout << "[Live] " << file_id << " ffmpeg finished normally" << std::endl;
                 }
             } else {
                 std::cout << "[Live] " << file_id << " stale monitor (gen "
@@ -386,9 +480,9 @@ void LiveSessionManager::start_ffmpeg_locked(const std::string& file_id,
     }).detach();
 #else
     session->ffmpeg_running = true;
-    uint64_t current_generation = session->ffmpeg_generation;
     std::thread([this, file_id, cmd, current_generation]() {
         int ret = std::system(cmd.c_str());
+        if (shutting_down_) return;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = sessions_.find(file_id);
         if (it != sessions_.end()) {
@@ -421,7 +515,6 @@ std::string LiveSessionManager::build_ffmpeg_cmd(const std::string& input_path,
         preset = it->second.preset;
     }
 
-    // Build video filter chain
     std::string vf;
     if (resolution > 0) {
         vf += "scale=-2:" + std::to_string(resolution);
@@ -450,7 +543,6 @@ std::string LiveSessionManager::build_ffmpeg_cmd(const std::string& input_path,
     std::string playlist_path = session_dir + "/playlist.m3u8";
     std::string seg_pattern = session_dir + "/seg%d.mp4";
 
-    // Hardware device initialization
     std::string hw_init;
     if (cfg_.transcode_profile == "qsv") {
         hw_init = " -init_hw_device qsv=hw:0";
@@ -460,7 +552,6 @@ std::string LiveSessionManager::build_ffmpeg_cmd(const std::string& input_path,
         hw_init = " -init_hw_device d3d11va=hw:0";
     }
 
-    // Video encoding args based on profile
     std::string video_args;
     if (cfg_.transcode_profile == "nvenc") {
         video_args = "-c:v h264_nvenc -cq " + std::to_string(crf) + " -preset " + preset + " -c:a aac -b:a 128k";
