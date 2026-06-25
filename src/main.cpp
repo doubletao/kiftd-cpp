@@ -15,6 +15,8 @@
 #include "controllers/share_controller.h"
 #include "controllers/transcode_controller.h"
 #include "controllers/play_history_controller.h"
+#include "controllers/admin_controller.h"
+#include "controllers/user_controller.h"
 
 namespace fs = std::filesystem;
 using namespace kiftd;
@@ -74,12 +76,12 @@ int main(int argc, char* argv[]) {
 
     // Initialize accounts
     Auth auth(db);
+    if (!auth.init_from_config(cfg.accounts)) {
+        std::cerr << "Failed to initialize accounts" << std::endl;
+        return 1;
+    }
     for (auto& acc : cfg.accounts) {
-        if (!auth.init_admin(acc.username, acc.password)) {
-            std::cerr << "Failed to create account: " << acc.username << std::endl;
-            return 1;
-        }
-        std::cout << "Account ready: " << acc.username << std::endl;
+        std::cout << "Admin account ready: " << acc.username << std::endl;
     }
 
     // Initialize file store
@@ -99,6 +101,8 @@ int main(int argc, char* argv[]) {
 
     // Register API routes
     register_auth_routes(app, db, auth, cfg);
+    register_admin_routes(app, db, auth);
+    register_user_routes(app, db, auth);
     register_folder_routes(app, db);
     register_file_routes(app, db, file_store);
     register_share_routes(app, db, file_store);

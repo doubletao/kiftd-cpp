@@ -108,6 +108,7 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
         }
         nlohmann::json j;
         j["username"] = user;
+        j["role"] = db.get_user_role(user);
         return crow::response(200, j.dump());
     });
 }

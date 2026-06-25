@@ -10,6 +10,7 @@ struct User {
     std::string id;
     std::string password_hash;
     std::string salt;
+    std::string role = "user";  // "admin" or "user"
     std::string created_at;
 };
 
@@ -66,10 +67,14 @@ public:
     bool init_schema();
 
     // Users
-    bool create_user(const std::string& id, const std::string& password_hash, const std::string& salt);
+    bool create_user(const std::string& id, const std::string& password_hash, const std::string& salt, const std::string& role = "user");
     User get_user(const std::string& id);
     bool user_exists(const std::string& id);
     bool delete_user(const std::string& id);
+    bool clear_admin_users();
+    std::string get_user_role(const std::string& id);
+    std::vector<User> get_all_users();
+    bool update_password(const std::string& id, const std::string& password_hash, const std::string& salt);
 
     // Folders
     bool create_folder(const Folder& f);

@@ -43,6 +43,18 @@ const router = createRouter({
       name: 'play',
       component: () => import('../views/PlayView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('../views/AdminView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true }
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('../views/UserSettingsView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })
@@ -52,6 +64,10 @@ router.beforeEach(async (to) => {
     try {
       const res = await fetch('/api/auth/me', { credentials: 'same-origin' })
       if (!res.ok) return { name: 'login' }
+      if (to.meta.requiresAdmin) {
+        const data = await res.json()
+        if (data.role !== 'admin') return { name: 'home' }
+      }
     } catch {
       return { name: 'login' }
     }

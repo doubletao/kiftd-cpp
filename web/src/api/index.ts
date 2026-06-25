@@ -16,6 +16,30 @@ export const logout = () => api.post('/auth/logout')
 
 export const getMe = () => api.get('/auth/me')
 
+// Admin - User Management
+export const getUsers = () => api.get('/users')
+
+export async function createUser(username: string, password: string) {
+  const hashed = await sha256(password)
+  return api.post('/users', { username, password: hashed })
+}
+
+export const deleteUser = (username: string) => api.delete(`/users/${username}`)
+
+export async function resetPassword(username: string, password: string) {
+  const hashed = await sha256(password)
+  return api.put(`/users/${username}/password`, { password: hashed })
+}
+
+// User - Self Service
+export async function changePassword(oldPassword: string, newPassword: string) {
+  const oldHashed = await sha256(oldPassword)
+  const newHashed = await sha256(newPassword)
+  return api.put('/users/me/password', { old_password: oldHashed, new_password: newHashed })
+}
+
+export const deleteMyAccount = () => api.delete('/users/me')
+
 // Folders
 export const getFolder = (id: string) => api.get(`/folders/${id}`)
 

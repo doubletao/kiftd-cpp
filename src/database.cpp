@@ -52,6 +52,7 @@ bool Database::init_schema() {
             id TEXT PRIMARY KEY,
             password_hash TEXT NOT NULL,
             salt TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE TABLE IF NOT EXISTS folders (
@@ -88,12 +89,13 @@ bool Database::init_schema() {
 
 // --- Users ---
 
-bool Database::create_user(const std::string& id, const std::string& password_hash, const std::string& salt) {
-    auto stmt = prepare("INSERT INTO users (id, password_hash, salt) VALUES (?, ?, ?)");
+bool Database::create_user(const std::string& id, const std::string& password_hash, const std::string& salt, const std::string& role) {
+    auto stmt = prepare("INSERT OR REPLACE INTO users (id, password_hash, salt, role) VALUES (?, ?, ?, ?)");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, password_hash.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, salt.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, role.c_str(), -1, SQLITE_TRANSIENT);
     bool ok = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     return ok;
@@ -101,14 +103,15 @@ bool Database::create_user(const std::string& id, const std::string& password_ha
 
 User Database::get_user(const std::string& id) {
     User u;
-    auto stmt = prepare("SELECT id, password_hash, salt, created_at FROM users WHERE id = ?");
+    auto stmt = prepare("SELECT id, password_hash, salt, role, created_at FROM users WHERE id = ?");
     if (!stmt) return u;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         u.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         u.password_hash = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         u.salt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        u.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        u.role = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        u.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
     }
     sqlite3_finalize(stmt);
     return u;
@@ -127,6 +130,50 @@ bool Database::delete_user(const std::string& id) {
     auto stmt = prepare("DELETE FROM users WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool Database::clear_admin_users() {
+    return exec("DELETE FROM users WHERE role = 'admin'");
+}
+
+std::string Database::get_user_role(const std::string& id) {
+    auto stmt = prepare("SELECT role FROM users WHERE id = ?");
+    if (!stmt) return "";
+    sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+    std::string role;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        role = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+    return role;
+}
+
+std::vector<User> Database::get_all_users() {
+    std::vector<User> users;
+    auto stmt = prepare("SELECT id, password_hash, salt, role, created_at FROM users ORDER BY role DESC, id ASC");
+    if (!stmt) return users;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        User u;
+        u.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        u.password_hash = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        u.salt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        u.role = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        u.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        users.push_back(std::move(u));
+    }
+    sqlite3_finalize(stmt);
+    return users;
+}
+
+bool Database::update_password(const std::string& id, const std::string& password_hash, const std::string& salt) {
+    auto stmt = prepare("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?");
+    if (!stmt) return false;
+    sqlite3_bind_text(stmt, 1, password_hash.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, salt.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, id.c_str(), -1, SQLITE_TRANSIENT);
     bool ok = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     return ok;
