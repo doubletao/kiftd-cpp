@@ -35,7 +35,7 @@ add_executable(kiftd
     src/auth.cpp
     src/filestore.cpp
     src/transcode_manager.cpp
-    src/live_session_manager.cpp
+    src/live_segmenter.cpp
     src/controllers/auth_controller.cpp
     src/controllers/admin_controller.cpp
     src/controllers/user_controller.cpp

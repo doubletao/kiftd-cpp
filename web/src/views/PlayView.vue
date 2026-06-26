@@ -75,7 +75,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
-import { getFolder, getTranscodeConfig, getTranscodeStatus, submitTranscode, getPlayHistory, updatePlayHistory, deletePlayHistory, getTranscodeStreamUrl, getPreviewUrl, startLiveSession, getLivePlaylistUrl, cancelLiveSession } from '../api'
+import { getFolder, getTranscodeConfig, getTranscodeStatus, submitTranscode, getPlayHistory, updatePlayHistory, deletePlayHistory, getTranscodeStreamUrl, getPreviewUrl, getLivePlaylistUrl } from '../api'
 import TranscodeDialog from '../components/TranscodeDialog.vue'
 
 const route = useRoute()
@@ -117,6 +117,7 @@ const skipOutroVal = ref(0)
 const currentTime = ref(0)
 const duration = ref(0)
 let lastProgressEmit = 0
+let liveTimeOffset = 0  // offset for live mode: actual_time = hls_time + offset
 
 // Play history
 interface PlayHistoryItem {
@@ -234,22 +235,14 @@ async function loadFolder() {
   }
 }
 
-async function startLivePlay() {
+async function startLivePlay(position?: number) {
   const f = currentFile.value
   if (!f) return
 
-  // Start live session on server
-  const rec = playHistoryRecord.value
-  const preset = rec?.preset || 'fast'
-  const audioIdx = rec?.audio_index ?? 0
-  const subtitleIdx = rec?.subtitle_index ?? -1
-  const extSubPath = rec?.external_subtitle_path || ''
-
-  try {
-    await startLiveSession(f.id, audioIdx, subtitleIdx, preset, extSubPath)
-  } catch (e: any) {
-    alert('Failed to start live session: ' + (e.response?.data?.error || e.message))
-    return
+  // Destroy existing hls instance before creating new one
+  if (hlsInstance) {
+    hlsInstance.destroy()
+    hlsInstance = null
   }
 
   playMode.value = 'live'
@@ -260,7 +253,13 @@ async function startLivePlay() {
   const video = videoRef.value
   if (!video) return
 
-  const playlistUrl = getLivePlaylistUrl(f.id)
+  // Calculate start segment from position or play history
+  const rec = playHistoryRecord.value
+  const resumePos = position ?? rec?.position ?? 0
+  const startSegment = Math.floor(resumePos / 4)
+  liveTimeOffset = startSegment * 4
+  const playlistUrl = getLivePlaylistUrl(f.id, startSegment)
+  console.log('[Live] starting from segment', startSegment, '(position', resumePos, 's, offset', liveTimeOffset, 's)')
 
   if (Hls.isSupported()) {
     hlsInstance = new Hls({
@@ -280,7 +279,6 @@ async function startLivePlay() {
       }
     })
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    // Safari native HLS support
     video.src = playlistUrl
     video.addEventListener('loadedmetadata', () => {
       video.play().catch(() => {})
@@ -322,6 +320,8 @@ async function handleTranscodeSubmit(preset: string, audioIndex: number, subtitl
 
 function onLoadedMetadata() {
   if (!videoRef.value) return
+  // In live mode, m3u8 already starts from resume position - don't seek
+  if (playMode.value === 'live') return
   // Resume from query param or play history
   const queryTime = parseFloat(route.query.t as string)
   if (queryTime > 0) {
@@ -337,18 +337,28 @@ function onLoadedMetadata() {
 
 function onTimeUpdate() {
   if (!videoRef.value) return
-  currentTime.value = videoRef.value.currentTime
-  duration.value = videoRef.value.duration
+  const rawTime = videoRef.value.currentTime
+  const rawDuration = videoRef.value.duration
+
+  if (playMode.value === 'live') {
+    currentTime.value = rawTime + liveTimeOffset
+    duration.value = rawDuration + liveTimeOffset
+  } else {
+    currentTime.value = rawTime
+    duration.value = rawDuration
+  }
 
   // Save progress every 5s (skip if duration is not yet available)
   const now = Date.now()
-  if (now - lastProgressEmit >= 5000 && videoRef.value.duration > 0) {
+  if (now - lastProgressEmit >= 5000 && rawDuration > 0) {
     lastProgressEmit = now
-    updatePlayHistory(folderId.value, fileId.value, videoRef.value.currentTime, videoRef.value.duration).catch(() => {})
+    const saveTime = playMode.value === 'live' ? rawTime + liveTimeOffset : rawTime
+    const saveDur = playMode.value === 'live' ? rawDuration + liveTimeOffset : rawDuration
+    updatePlayHistory(folderId.value, fileId.value, saveTime, saveDur).catch(() => {})
   }
 
   // Skip outro
-  if (skipOutroVal.value > 0 && videoRef.value.duration > 0 && (videoRef.value.duration - videoRef.value.currentTime) <= skipOutroVal.value) {
+  if (skipOutroVal.value > 0 && rawDuration > 0 && (rawDuration - rawTime) <= skipOutroVal.value) {
     onEnded()
   }
 }
@@ -379,12 +389,11 @@ function switchEpisode(direction: number) {
 
   // Save current progress before switching
   if (videoRef.value && videoRef.value.duration > 0) {
-    updatePlayHistory(folderId.value, fileId.value, videoRef.value.currentTime, videoRef.value.duration).catch(() => {})
-  }
-
-  // Cancel live session before switching
-  if (playMode.value === 'live') {
-    cancelLiveSession(fileId.value).catch(() => {})
+    const raw = videoRef.value.currentTime
+    const rawDur = videoRef.value.duration
+    const saveTime = playMode.value === 'live' ? raw + liveTimeOffset : raw
+    const saveDur = playMode.value === 'live' ? rawDur + liveTimeOffset : rawDur
+    updatePlayHistory(folderId.value, fileId.value, saveTime, saveDur).catch(() => {})
   }
 
   // Navigate - the loadFolder will determine play mode for the new file
@@ -466,16 +475,16 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown)
   // Save progress on leave
   if (videoRef.value && videoRef.value.duration > 0) {
-    updatePlayHistory(folderId.value, fileId.value, videoRef.value.currentTime, videoRef.value.duration).catch(() => {})
+    const raw = videoRef.value.currentTime
+    const rawDur = videoRef.value.duration
+    const saveTime = playMode.value === 'live' ? raw + liveTimeOffset : raw
+    const saveDur = playMode.value === 'live' ? rawDur + liveTimeOffset : rawDur
+    updatePlayHistory(folderId.value, fileId.value, saveTime, saveDur).catch(() => {})
   }
   // Destroy hls instance
   if (hlsInstance) {
     hlsInstance.destroy()
     hlsInstance = null
-  }
-  // Cancel live session on server (kills ffmpeg)
-  if (playMode.value === 'live' && currentLiveFileId) {
-    cancelLiveSession(currentLiveFileId).catch(() => {})
   }
 })
 
@@ -486,10 +495,6 @@ watch(() => route.params.fileId, (newId, oldId) => {
     if (hlsInstance) {
       hlsInstance.destroy()
       hlsInstance = null
-    }
-    // Cancel live session for previous file
-    if (playMode.value === 'live' && currentLiveFileId) {
-      cancelLiveSession(currentLiveFileId).catch(() => {})
     }
     currentLiveFileId = null
     lastProgressEmit = 0

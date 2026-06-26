@@ -8,7 +8,7 @@
 #include "auth.h"
 #include "filestore.h"
 #include "transcode_manager.h"
-#include "live_session_manager.h"
+#include "live_segmenter.h"
 #include "controllers/auth_controller.h"
 #include "controllers/folder_controller.h"
 #include "controllers/file_controller.h"
@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
 
     // Initialize transcode manager
     TranscodeManager transcode_mgr(cfg, cfg.files_dir);
-    LiveSessionManager live_mgr(cfg);
+    LiveSegmenter live_segmenter(cfg);
     if (!cfg.ffmpeg_path.empty()) {
         transcode_mgr.start();
         std::cout << "Transcode enabled: " << cfg.ffmpeg_path
@@ -106,7 +106,7 @@ int main(int argc, char* argv[]) {
     register_folder_routes(app, db);
     register_file_routes(app, db, file_store);
     register_share_routes(app, db, file_store);
-    register_transcode_routes(app, db, file_store, transcode_mgr, live_mgr, cfg);
+    register_transcode_routes(app, db, file_store, transcode_mgr, live_segmenter, cfg);
     register_play_history_routes(app, db, cfg);
 
     // Static file serving + SPA fallback
