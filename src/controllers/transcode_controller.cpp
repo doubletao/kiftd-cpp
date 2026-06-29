@@ -1,4 +1,5 @@
 #include "controllers/transcode_controller.h"
+#include "utils/common.h"
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <sstream>
@@ -15,26 +16,7 @@
 
 namespace fs = std::filesystem;
 
-#ifdef _WIN32
-static std::wstring utf8_to_wide(const std::string& s) {
-    if (s.empty()) return L"";
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    std::wstring ws(len - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-    return ws;
-}
-#endif
-
 namespace kiftd {
-
-static std::string get_user(const crow::request& req) {
-    auto cookie = req.get_header_value("Cookie");
-    auto pos = cookie.find("kiftd_user=");
-    if (pos == std::string::npos) return "";
-    auto start = pos + 11;
-    auto end = cookie.find(';', start);
-    return cookie.substr(start, end == std::string::npos ? std::string::npos : end - start);
-}
 
 // Build cache path: transcode_dir/{file_id}/video.mp4
 static std::string build_cache_path(const Config& cfg, Database& db, const FileRecord& file) {
@@ -200,7 +182,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/probe")
         .methods("POST"_method)
     ([&db, &store, &cfg](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         if (cfg.ffmpeg_path.empty()) {
@@ -274,7 +256,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/transcode")
         .methods("POST"_method)
     ([&db, &store, &mgr, &cfg](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         if (cfg.ffmpeg_path.empty()) {
@@ -323,7 +305,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/transcode/status")
         .methods("GET"_method)
     ([&mgr, &db, &cfg](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         // Check task status first (pending/transcoding)
@@ -348,7 +330,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/transcode")
         .methods("DELETE"_method)
     ([&db, &cfg, &mgr](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         // Cancel active task if any (kills ffmpeg, removes from queue, cleans cache)
@@ -370,8 +352,8 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     // GET /api/transcode/tasks
     CROW_ROUTE(app, "/api/transcode/tasks")
         .methods("GET"_method)
-    ([&mgr, &db](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&mgr, &db, &cfg](const crow::request& req) {
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto tasks = mgr.get_all_tasks();
@@ -399,8 +381,8 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     // PUT /api/transcode/tasks/reorder
     CROW_ROUTE(app, "/api/transcode/tasks/reorder")
         .methods("PUT"_method)
-    ([&mgr](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&mgr, &cfg](const crow::request& req) {
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto body = nlohmann::json::parse(req.body, nullptr, false);
@@ -421,7 +403,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/transcode/stream")
         .methods("GET"_method)
     ([&db, &cfg](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto file = db.get_file(file_id);
@@ -482,7 +464,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/live/start")
         .methods("POST"_method)
     ([&db, &store, &segmenter, &cfg](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         if (cfg.ffmpeg_path.empty()) {
@@ -510,7 +492,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/live.m3u8")
         .methods("GET"_method)
     ([&db, &store, &segmenter, &cfg](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto file = db.get_file(file_id);
@@ -562,7 +544,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/live/segment/init.mp4")
         .methods("GET"_method)
     ([&db, &store, &segmenter, &cfg](const crow::request& req, const std::string& file_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto file = db.get_file(file_id);
@@ -598,7 +580,7 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
     CROW_ROUTE(app, "/api/files/<string>/live/segment/<int>.mp4")
         .methods("GET"_method)
     ([&db, &store, &segmenter, &cfg](const crow::request& req, const std::string& file_id, int segment_id) {
-        std::string user = get_user(req);
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto file = db.get_file(file_id);

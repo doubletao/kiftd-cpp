@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <mutex>
 #include <sqlite3.h>
 
 namespace kiftd {
@@ -84,11 +85,13 @@ public:
     bool delete_folder(const std::string& id);
     bool has_children(const std::string& folder_id);
     std::string get_folder_path(const std::string& folder_id);
+    std::vector<Folder> get_folder_ancestors(const std::string& folder_id);
 
     // Files
     bool create_file(const FileRecord& f);
     FileRecord get_file(const std::string& id);
     std::vector<FileRecord> get_files_in_folder(const std::string& folder_id);
+    std::vector<FileRecord> get_files_in_folder(const std::string& folder_id, int offset, int limit, int64_t& total);
     bool rename_file(const std::string& id, const std::string& new_name);
     bool delete_file(const std::string& id);
 
@@ -103,10 +106,12 @@ public:
     bool upsert_play_history(const std::string& folder_id, const std::string& file_id, double position, double duration,
                              const std::string& preset = "", int audio_index = 0, int subtitle_index = -1, const std::string& external_subtitle_path = "");
     std::vector<PlayHistoryRecord> get_all_play_history();
+    std::vector<PlayHistoryRecord> get_play_history_with_names(std::vector<std::pair<std::string, std::string>>& names);
     bool delete_play_history(const std::string& folder_id);
 
 private:
     sqlite3* db_ = nullptr;
+    mutable std::recursive_mutex mutex_;
 
     bool exec(const std::string& sql);
     sqlite3_stmt* prepare(const std::string& sql);

@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
+#include <iostream>
 
 namespace fs = std::filesystem;
 
@@ -112,8 +113,12 @@ void Config::load(const std::string& config_path) {
         // Play History config
         if (j.contains("play_progress_threshold")) play_progress_threshold = j["play_progress_threshold"].get<int>();
         if (j.contains("auto_transcode_next")) auto_transcode_next = j["auto_transcode_next"].get<bool>();
-    } catch (...) {
-        // Config parse error, use defaults
+
+        // Security config
+        if (j.contains("secret_key")) secret_key = j["secret_key"].get<std::string>();
+        if (j.contains("max_upload_size")) max_upload_size = j["max_upload_size"].get<int64_t>();
+    } catch (const std::exception& e) {
+        std::cerr << "Config parse error: " << e.what() << std::endl;
     }
 }
 

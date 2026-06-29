@@ -1,6 +1,7 @@
 # Build
 build/
 cmake-build-*/
+bin/
 
 # Runtime data
 data/kiftd.db*

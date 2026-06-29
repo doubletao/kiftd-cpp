@@ -1,40 +1,30 @@
 #include "controllers/play_history_controller.h"
 #include "database.h"
 #include "config.h"
+#include "utils/common.h"
 #include <nlohmann/json.hpp>
 
 namespace kiftd {
 
-static std::string get_user(const crow::request& req) {
-    auto cookie = req.get_header_value("Cookie");
-    auto pos = cookie.find("kiftd_user=");
-    if (pos == std::string::npos) return "";
-    auto start = pos + 11;
-    auto end = cookie.find(';', start);
-    return cookie.substr(start, end == std::string::npos ? std::string::npos : end - start);
-}
-
-void register_play_history_routes(crow::SimpleApp& app, Database& db, const Config& cfg) {
+void register_play_history_routes(crow::SimpleApp& app, Database& db, const Config& cfg, const std::string& secret_key) {
 
     // GET /api/play-history
     CROW_ROUTE(app, "/api/play-history")
         .methods("GET"_method)
-    ([&db](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
-        auto records = db.get_all_play_history();
+        std::vector<std::pair<std::string, std::string>> names;
+        auto records = db.get_play_history_with_names(names);
         nlohmann::json arr = nlohmann::json::array();
-        for (auto& r : records) {
+        for (size_t i = 0; i < records.size(); ++i) {
+            auto& r = records[i];
             nlohmann::json j;
             j["folder_id"] = r.folder_id;
-
-            auto folder = db.get_folder(r.folder_id);
-            j["folder_name"] = folder.name.empty() ? r.folder_id : folder.name;
-
-            auto file = db.get_file(r.file_id);
+            j["folder_name"] = names[i].first;
             j["file_id"] = r.file_id;
-            j["file_name"] = file.name.empty() ? r.file_id : file.name;
+            j["file_name"] = names[i].second;
 
             j["position"] = r.position;
             j["duration"] = r.duration;
@@ -55,8 +45,8 @@ void register_play_history_routes(crow::SimpleApp& app, Database& db, const Conf
     // PUT /api/play-history
     CROW_ROUTE(app, "/api/play-history")
         .methods("PUT"_method)
-    ([&db, &cfg](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&db, &cfg, &secret_key](const crow::request& req) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto body = nlohmann::json::parse(req.body, nullptr, false);
@@ -90,8 +80,8 @@ void register_play_history_routes(crow::SimpleApp& app, Database& db, const Conf
     // DELETE /api/play-history/<string>
     CROW_ROUTE(app, "/api/play-history/<string>")
         .methods("DELETE"_method)
-    ([&db](const crow::request& req, const std::string& folder_id) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req, const std::string& folder_id) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         if (!db.delete_play_history(folder_id)) {

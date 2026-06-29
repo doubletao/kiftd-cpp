@@ -2,6 +2,7 @@
 #include "utils/uuid.h"
 #include <fstream>
 #include <filesystem>
+#include <iostream>
 
 namespace fs = std::filesystem;
 
@@ -17,7 +18,8 @@ std::string FileStore::save(const std::string& source_path) {
     try {
         fs::copy_file(source_path, dest, fs::copy_options::overwrite_existing);
         return disk_name;
-    } catch (...) {
+    } catch (const std::exception& e) {
+        std::cerr << "FileStore::save failed: " << e.what() << std::endl;
         return "";
     }
 }
@@ -26,8 +28,16 @@ std::string FileStore::save_from_buffer(const char* data, size_t size) {
     std::string disk_name = generate_uuid() + ".bin";
     std::string dest = files_dir_ + "/" + disk_name;
     std::ofstream ofs(dest, std::ios::binary);
-    if (!ofs.is_open()) return "";
+    if (!ofs.is_open()) {
+        std::cerr << "FileStore::save_from_buffer: failed to open " << dest << std::endl;
+        return "";
+    }
     ofs.write(data, size);
+    if (ofs.fail()) {
+        std::cerr << "FileStore::save_from_buffer: write failed" << std::endl;
+        fs::remove(dest);
+        return "";
+    }
     ofs.close();
     return disk_name;
 }

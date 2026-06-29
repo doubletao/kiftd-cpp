@@ -1,27 +1,30 @@
 #include "controllers/folder_controller.h"
 #include "utils/uuid.h"
+#include "utils/common.h"
 #include <nlohmann/json.hpp>
 
 namespace kiftd {
 
-// Helper: extract username from cookie
-static std::string get_user(const crow::request& req) {
-    auto cookie = req.get_header_value("Cookie");
-    auto pos = cookie.find("kiftd_user=");
-    if (pos == std::string::npos) return "";
-    auto start = pos + 11;
-    auto end = cookie.find(';', start);
-    return cookie.substr(start, end == std::string::npos ? std::string::npos : end - start);
-}
-
-void register_folder_routes(crow::SimpleApp& app, Database& db) {
+void register_folder_routes(crow::SimpleApp& app, Database& db, const std::string& secret_key) {
 
     // GET /api/folders/<string> - get folder contents
     CROW_ROUTE(app, "/api/folders/<string>")
         .methods("GET"_method)
-    ([&db](const crow::request& req, const std::string& folder_id) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req, const std::string& folder_id) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
+
+        // Parse pagination params
+        int page = 1, page_size = 100;
+        auto url_params = req.url_params;
+        auto page_str = url_params.get("page");
+        auto page_size_str = url_params.get("page_size");
+        if (page_str) {
+            try { page = std::max(1, std::stoi(page_str)); } catch (...) {}
+        }
+        if (page_size_str) {
+            try { page_size = std::clamp(std::stoi(page_size_str), 1, 1000); } catch (...) {}
+        }
 
         Folder folder;
         if (folder_id == "root") {
@@ -33,21 +36,18 @@ void register_folder_routes(crow::SimpleApp& app, Database& db) {
         }
 
         auto subfolders = db.get_subfolders(folder_id == "root" ? "" : folder_id);
-        auto files = db.get_files_in_folder(folder_id == "root" ? "" : folder_id);
+        
+        // Paginated file query
+        int64_t total_files = 0;
+        int offset = (page - 1) * page_size;
+        auto files = db.get_files_in_folder(folder_id == "root" ? "" : folder_id, offset, page_size, total_files);
 
-        // Build breadcrumb
+        // Build breadcrumb using recursive CTE
         nlohmann::json breadcrumb = nlohmann::json::array();
         if (folder_id != "root") {
-            // Walk up parent chain
-            std::vector<Folder> chain;
-            Folder cur = folder;
-            while (!cur.id.empty()) {
-                chain.push_back(cur);
-                if (cur.parent_id.empty()) break;
-                cur = db.get_folder(cur.parent_id);
-            }
-            for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-                breadcrumb.push_back({{"id", it->id}, {"name", it->name}});
+            auto ancestors = db.get_folder_ancestors(folder_id);
+            for (auto& a : ancestors) {
+                breadcrumb.push_back({{"id", a.id}, {"name", a.name}});
             }
         }
 
@@ -64,19 +64,27 @@ void register_folder_routes(crow::SimpleApp& app, Database& db) {
             });
         }
 
+        int total_pages = (total_files + page_size - 1) / page_size;
+
         nlohmann::json result;
         result["folder"] = {{"id", folder_id == "root" ? "root" : folder.id}, {"name", folder.name}};
         result["breadcrumb"] = breadcrumb;
         result["folders"] = folder_list;
         result["files"] = file_list;
+        result["pagination"] = {
+            {"page", page},
+            {"page_size", page_size},
+            {"total_files", total_files},
+            {"total_pages", total_pages}
+        };
         return crow::response(200, result.dump());
     });
 
     // POST /api/folders - create folder
     CROW_ROUTE(app, "/api/folders")
         .methods("POST"_method)
-    ([&db](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto body = nlohmann::json::parse(req.body, nullptr, false);
@@ -119,8 +127,8 @@ void register_folder_routes(crow::SimpleApp& app, Database& db) {
     // PUT /api/folders/<string> - rename folder
     CROW_ROUTE(app, "/api/folders/<string>")
         .methods("PUT"_method)
-    ([&db](const crow::request& req, const std::string& folder_id) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req, const std::string& folder_id) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto body = nlohmann::json::parse(req.body, nullptr, false);
@@ -144,8 +152,8 @@ void register_folder_routes(crow::SimpleApp& app, Database& db) {
     // DELETE /api/folders/<string> - delete folder
     CROW_ROUTE(app, "/api/folders/<string>")
         .methods("DELETE"_method)
-    ([&db](const crow::request& req, const std::string& folder_id) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req, const std::string& folder_id) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto folder = db.get_folder(folder_id);

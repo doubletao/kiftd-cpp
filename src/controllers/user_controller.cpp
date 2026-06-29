@@ -1,25 +1,17 @@
 #include "controllers/user_controller.h"
 #include "utils/sha256.h"
+#include "utils/common.h"
 #include <nlohmann/json.hpp>
 
 namespace kiftd {
 
-static std::string get_user(const crow::request& req) {
-    auto cookie = req.get_header_value("Cookie");
-    auto pos = cookie.find("kiftd_user=");
-    if (pos == std::string::npos) return "";
-    auto start = pos + 11;
-    auto end = cookie.find(';', start);
-    return cookie.substr(start, end == std::string::npos ? std::string::npos : end - start);
-}
-
-void register_user_routes(crow::SimpleApp& app, Database& db, Auth& auth) {
+void register_user_routes(crow::SimpleApp& app, Database& db, Auth& auth, const std::string& secret_key) {
 
     // PUT /api/users/me/password - change own password (user only, not admin)
     CROW_ROUTE(app, "/api/users/me/password")
         .methods("PUT"_method)
-    ([&db, &auth](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&db, &auth, &secret_key](const crow::request& req) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         // Admin password is managed by config file
@@ -55,8 +47,8 @@ void register_user_routes(crow::SimpleApp& app, Database& db, Auth& auth) {
     // DELETE /api/users/me - delete own account
     CROW_ROUTE(app, "/api/users/me")
         .methods("DELETE"_method)
-    ([&db, &auth](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&db, &auth, &secret_key](const crow::request& req) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         if (auth.is_admin(user)) {

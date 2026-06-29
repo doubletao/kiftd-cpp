@@ -53,6 +53,12 @@ struct Config {
     int play_progress_threshold = 90;   // 0-100, position/duration >= this% = watched
     bool auto_transcode_next = false;
 
+    // Security
+    std::string secret_key;             // for cookie signing
+
+    // Upload limits
+    int64_t max_upload_size = 100 * 1024 * 1024;  // 100MB default
+
     static Config& instance();
     void load(const std::string& config_path);
     void apply_defaults();

@@ -1,4 +1,5 @@
 #include "transcode_manager.h"
+#include "utils/common.h"
 #include <filesystem>
 #include <iostream>
 #include <algorithm>
@@ -9,16 +10,6 @@
 #include <stringapiset.h>
 #else
 #include <cstdlib>
-#endif
-
-#ifdef _WIN32
-static std::wstring utf8_to_wide(const std::string& s) {
-    if (s.empty()) return L"";
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    std::wstring ws(len - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-    return ws;
-}
 #endif
 
 namespace fs = std::filesystem;
@@ -285,17 +276,6 @@ void TranscodeManager::run_task(TranscodeTask& task) {
         task.status = TaskStatus::Done;
     }
 #endif
-}
-
-static std::string escape_vf_path(const std::string& path) {
-    std::string escaped;
-    for (char c : path) {
-        if (c == '\\' || c == ':' || c == '\'' || c == '[' || c == ']') {
-            escaped += '\\';
-        }
-        escaped += c;
-    }
-    return escaped;
 }
 
 static std::string replace_all(std::string str, const std::string& from, const std::string& to) {

@@ -1,55 +1,40 @@
 #include "controllers/share_controller.h"
 #include "utils/uuid.h"
+#include "utils/common.h"
 #include <nlohmann/json.hpp>
 #include <filesystem>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
 namespace kiftd {
 
-static std::string get_user(const crow::request& req) {
-    auto cookie = req.get_header_value("Cookie");
-    auto pos = cookie.find("kiftd_user=");
-    if (pos == std::string::npos) return "";
-    auto start = pos + 11;
-    auto end = cookie.find(';', start);
-    return cookie.substr(start, end == std::string::npos ? std::string::npos : end - start);
+static bool is_share_expired(const std::string& expire_at) {
+    if (expire_at.empty()) return false;
+    
+    try {
+        std::tm tm = {};
+        std::istringstream ss(expire_at);
+        ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
+        if (ss.fail()) return false;
+        
+        auto expire_time = std::mktime(&tm);
+        auto now = std::time(nullptr);
+        return now > expire_time;
+    } catch (...) {
+        return false;
+    }
 }
 
-static std::string get_content_type(const std::string& filename) {
-    auto dot = filename.rfind('.');
-    if (dot == std::string::npos) return "application/octet-stream";
-    std::string ext = filename.substr(dot + 1);
-    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-    if (ext == "txt" || ext == "text") return "text/plain; charset=utf-8";
-    if (ext == "html" || ext == "htm") return "text/html; charset=utf-8";
-    if (ext == "css") return "text/css";
-    if (ext == "js") return "application/javascript";
-    if (ext == "json") return "application/json";
-    if (ext == "png") return "image/png";
-    if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
-    if (ext == "gif") return "image/gif";
-    if (ext == "svg") return "image/svg+xml";
-    if (ext == "ico") return "image/x-icon";
-    if (ext == "pdf") return "application/pdf";
-    if (ext == "zip") return "application/zip";
-    if (ext == "mp3") return "audio/mpeg";
-    if (ext == "wav") return "audio/wav";
-    if (ext == "ogg") return "audio/ogg";
-    if (ext == "flac") return "audio/flac";
-    if (ext == "aac") return "audio/aac";
-    if (ext == "webm") return "video/webm";
-    if (ext == "mp4") return "video/mp4";
-    return "application/octet-stream";
-}
-
-void register_share_routes(crow::SimpleApp& app, Database& db, FileStore& store) {
+void register_share_routes(crow::SimpleApp& app, Database& db, FileStore& store, const std::string& secret_key) {
 
     // POST /api/shares - create share link
     CROW_ROUTE(app, "/api/shares")
         .methods("POST"_method)
-    ([&db](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto body = nlohmann::json::parse(req.body, nullptr, false);
@@ -82,8 +67,8 @@ void register_share_routes(crow::SimpleApp& app, Database& db, FileStore& store)
     // GET /api/shares/mine - list my shares
     CROW_ROUTE(app, "/api/shares/mine")
         .methods("GET"_method)
-    ([&db](const crow::request& req) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto shares = db.get_shares_by_user(user);
@@ -103,8 +88,8 @@ void register_share_routes(crow::SimpleApp& app, Database& db, FileStore& store)
     // DELETE /api/shares/<string> - cancel share
     CROW_ROUTE(app, "/api/shares/<string>")
         .methods("DELETE"_method)
-    ([&db](const crow::request& req, const std::string& share_id) {
-        std::string user = get_user(req);
+    ([&db, &secret_key](const crow::request& req, const std::string& share_id) {
+        std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto share = db.get_share(share_id);
@@ -127,9 +112,8 @@ void register_share_routes(crow::SimpleApp& app, Database& db, FileStore& store)
         }
 
         // Check expiration
-        if (!share.expire_at.empty()) {
-            // Simple string comparison works for ISO datetime format
-            // In production you'd parse to time_t
+        if (is_share_expired(share.expire_at)) {
+            return crow::response(410, R"({"error":"share link has expired"})");
         }
 
         auto file = db.get_file(share.file_id);

@@ -1,4 +1,5 @@
 #include "live_segmenter.h"
+#include "utils/common.h"
 #include <iostream>
 #include <sstream>
 #include <filesystem>
@@ -14,27 +15,6 @@
 namespace fs = std::filesystem;
 
 namespace kiftd {
-
-#ifdef _WIN32
-static std::wstring utf8_to_wide(const std::string& s) {
-    if (s.empty()) return L"";
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    std::wstring ws(len - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-    return ws;
-}
-#endif
-
-static std::string escape_vf_path(const std::string& path) {
-    std::string escaped;
-    for (char c : path) {
-        if (c == '\\' || c == ':' || c == '\'' || c == '[' || c == ']') {
-            escaped += '\\';
-        }
-        escaped += c;
-    }
-    return escaped;
-}
 
 LiveSegmenter::LiveSegmenter(const Config& cfg)
     : cfg_(cfg), temp_base_dir_(cfg.data_dir + "/live_temp") {

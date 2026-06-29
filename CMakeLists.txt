@@ -46,6 +46,7 @@ add_executable(kiftd
     src/controllers/play_history_controller.cpp
     src/utils/sha256.cpp
     src/utils/uuid.cpp
+    src/utils/common.cpp
 )
 
 target_include_directories(kiftd PRIVATE src)

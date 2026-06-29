@@ -1,4 +1,5 @@
 #include "controllers/auth_controller.h"
+#include "utils/common.h"
 #include <nlohmann/json.hpp>
 #include <map>
 #include <chrono>
@@ -7,6 +8,7 @@
 namespace kiftd {
 
 static constexpr int MAX_RECORDS = 10000;
+static constexpr int COOKIE_EXPIRE_DAYS = 7;  // 7 days for movie watching sessions
 
 struct FailRecord {
     int count = 0;
@@ -77,8 +79,16 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
 
         g_fail_map.erase(ip);
 
+        // Sign cookie with expiration
+        int expire_hours = COOKIE_EXPIRE_DAYS * 24;
+        std::string cookie_value = sign_cookie(username, cfg.secret_key, expire_hours);
+        int max_age = COOKIE_EXPIRE_DAYS * 24 * 3600;
+
         crow::response res(200, R"({"ok":true})");
-        res.add_header("Set-Cookie", "kiftd_user=" + username + "; Path=/; HttpOnly");
+        res.add_header("Set-Cookie",
+            "kiftd_user=" + cookie_value +
+            "; Path=/; HttpOnly; SameSite=Lax"
+            "; Max-Age=" + std::to_string(max_age));
         return res;
     });
 
@@ -94,15 +104,8 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
     // GET /api/auth/me
     CROW_ROUTE(app, "/api/auth/me")
         .methods("GET"_method)
-   ([&db](const crow::request& req) {
-        auto cookie = req.get_header_value("Cookie");
-        std::string user;
-        auto pos = cookie.find("kiftd_user=");
-        if (pos != std::string::npos) {
-            auto start = pos + 11;
-            auto end = cookie.find(';', start);
-            user = cookie.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        }
+    ([&db, &cfg](const crow::request& req) {
+        std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) {
             return crow::response(401, R"({"error":"not logged in"})");
         }

@@ -17,6 +17,7 @@
 #include "controllers/play_history_controller.h"
 #include "controllers/admin_controller.h"
 #include "controllers/user_controller.h"
+#include "utils/sha256.h"
 
 namespace fs = std::filesystem;
 using namespace kiftd;
@@ -87,6 +88,12 @@ int main(int argc, char* argv[]) {
     // Initialize file store
     FileStore file_store(cfg.files_dir);
 
+    // Generate secret key if not provided
+    if (cfg.secret_key.empty()) {
+        cfg.secret_key = generate_salt(64);
+        std::cout << "Warning: No secret_key configured, using random key (sessions will be lost on restart)" << std::endl;
+    }
+
     // Initialize transcode manager
     TranscodeManager transcode_mgr(cfg, cfg.files_dir);
     LiveSegmenter live_segmenter(cfg);
@@ -101,13 +108,13 @@ int main(int argc, char* argv[]) {
 
     // Register API routes
     register_auth_routes(app, db, auth, cfg);
-    register_admin_routes(app, db, auth);
-    register_user_routes(app, db, auth);
-    register_folder_routes(app, db);
-    register_file_routes(app, db, file_store);
-    register_share_routes(app, db, file_store);
+    register_admin_routes(app, db, auth, cfg.secret_key);
+    register_user_routes(app, db, auth, cfg.secret_key);
+    register_folder_routes(app, db, cfg.secret_key);
+    register_file_routes(app, db, file_store, cfg);
+    register_share_routes(app, db, file_store, cfg.secret_key);
     register_transcode_routes(app, db, file_store, transcode_mgr, live_segmenter, cfg);
-    register_play_history_routes(app, db, cfg);
+    register_play_history_routes(app, db, cfg, cfg.secret_key);
 
     // Static file serving + SPA fallback
     CROW_ROUTE(app, "/<path>")

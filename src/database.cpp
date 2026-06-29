@@ -10,18 +10,19 @@ Database::~Database() {
 }
 
 bool Database::open(const std::string& path) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (sqlite3_open(path.c_str(), &db_) != SQLITE_OK) {
         std::cerr << "SQLite open failed: " << sqlite3_errmsg(db_) << std::endl;
         db_ = nullptr;
         return false;
     }
-    // Enable WAL mode for better concurrency
     exec("PRAGMA journal_mode=WAL;");
     exec("PRAGMA foreign_keys=ON;");
     return true;
 }
 
 void Database::close() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (db_) {
         sqlite3_close(db_);
         db_ = nullptr;
@@ -47,6 +48,7 @@ sqlite3_stmt* Database::prepare(const std::string& sql) {
 }
 
 bool Database::init_schema() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return exec(R"(
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -90,6 +92,7 @@ bool Database::init_schema() {
 // --- Users ---
 
 bool Database::create_user(const std::string& id, const std::string& password_hash, const std::string& salt, const std::string& role) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("INSERT OR REPLACE INTO users (id, password_hash, salt, role) VALUES (?, ?, ?, ?)");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
@@ -102,6 +105,7 @@ bool Database::create_user(const std::string& id, const std::string& password_ha
 }
 
 User Database::get_user(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     User u;
     auto stmt = prepare("SELECT id, password_hash, salt, role, created_at FROM users WHERE id = ?");
     if (!stmt) return u;
@@ -118,6 +122,7 @@ User Database::get_user(const std::string& id) {
 }
 
 bool Database::user_exists(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("SELECT 1 FROM users WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
@@ -127,6 +132,7 @@ bool Database::user_exists(const std::string& id) {
 }
 
 bool Database::delete_user(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("DELETE FROM users WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
@@ -136,10 +142,12 @@ bool Database::delete_user(const std::string& id) {
 }
 
 bool Database::clear_admin_users() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return exec("DELETE FROM users WHERE role = 'admin'");
 }
 
 std::string Database::get_user_role(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("SELECT role FROM users WHERE id = ?");
     if (!stmt) return "";
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
@@ -152,6 +160,7 @@ std::string Database::get_user_role(const std::string& id) {
 }
 
 std::vector<User> Database::get_all_users() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<User> users;
     auto stmt = prepare("SELECT id, password_hash, salt, role, created_at FROM users ORDER BY role DESC, id ASC");
     if (!stmt) return users;
@@ -169,6 +178,7 @@ std::vector<User> Database::get_all_users() {
 }
 
 bool Database::update_password(const std::string& id, const std::string& password_hash, const std::string& salt) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, password_hash.c_str(), -1, SQLITE_TRANSIENT);
@@ -182,6 +192,7 @@ bool Database::update_password(const std::string& id, const std::string& passwor
 // --- Folders ---
 
 bool Database::create_folder(const Folder& f) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("INSERT INTO folders (id, name, parent_id, creator) VALUES (?, ?, ?, ?)");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, f.id.c_str(), -1, SQLITE_TRANSIENT);
@@ -198,6 +209,7 @@ bool Database::create_folder(const Folder& f) {
 }
 
 Folder Database::get_folder(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     Folder f;
     auto stmt = prepare("SELECT id, name, parent_id, creator, created_at FROM folders WHERE id = ?");
     if (!stmt) return f;
@@ -215,6 +227,7 @@ Folder Database::get_folder(const std::string& id) {
 }
 
 std::vector<Folder> Database::get_subfolders(const std::string& parent_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<Folder> result;
     sqlite3_stmt* stmt = nullptr;
     if (parent_id.empty()) {
@@ -241,6 +254,7 @@ std::vector<Folder> Database::get_subfolders(const std::string& parent_id) {
 }
 
 bool Database::rename_folder(const std::string& id, const std::string& new_name) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("UPDATE folders SET name = ? WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, new_name.c_str(), -1, SQLITE_TRANSIENT);
@@ -251,6 +265,7 @@ bool Database::rename_folder(const std::string& id, const std::string& new_name)
 }
 
 bool Database::delete_folder(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // Delete all files in this folder first (just DB records, disk cleanup done separately)
     auto stmt = prepare("DELETE FROM files WHERE folder_id = ?");
     if (stmt) {
@@ -273,6 +288,7 @@ bool Database::delete_folder(const std::string& id) {
 }
 
 bool Database::has_children(const std::string& folder_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("SELECT 1 FROM folders WHERE parent_id = ? UNION ALL SELECT 1 FROM files WHERE folder_id = ? LIMIT 1");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
@@ -283,27 +299,60 @@ bool Database::has_children(const std::string& folder_id) {
 }
 
 std::string Database::get_folder_path(const std::string& folder_id) {
-    // Walk up the parent chain to build relative path like "anime/电视剧/"
-    std::vector<std::string> parts;
-    std::string current = folder_id;
-    while (!current.empty()) {
-        auto folder = get_folder(current);
-        if (folder.id.empty()) break;
-        parts.push_back(folder.name);
-        current = folder.parent_id;
-    }
-    // Reverse to get root-to-leaf order
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    // Use recursive CTE to get full path in one query
+    auto stmt = prepare(R"(
+        WITH RECURSIVE ancestors(id, name, parent_id) AS (
+            SELECT id, name, parent_id FROM folders WHERE id = ?
+            UNION ALL
+            SELECT f.id, f.name, f.parent_id FROM folders f JOIN ancestors a ON f.id = a.parent_id
+        )
+        SELECT name FROM ancestors ORDER BY name
+    )");
+    if (!stmt) return "";
+    sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
+    
     std::string path;
-    for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        auto name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (!name) continue;
         if (!path.empty()) path += "/";
-        path += *it;
+        path += name;
     }
+    sqlite3_finalize(stmt);
     return path;
+}
+
+std::vector<Folder> Database::get_folder_ancestors(const std::string& folder_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<Folder> result;
+    auto stmt = prepare(R"(
+        WITH RECURSIVE ancestors(id, name, parent_id, creator, created_at) AS (
+            SELECT id, name, parent_id, creator, created_at FROM folders WHERE id = ?
+            UNION ALL
+            SELECT f.id, f.name, f.parent_id, f.creator, f.created_at FROM folders f JOIN ancestors a ON f.id = a.parent_id
+        )
+        SELECT id, name, parent_id FROM ancestors
+    )");
+    if (!stmt) return result;
+    sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Folder f;
+        f.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        f.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        auto parent = sqlite3_column_text(stmt, 2);
+        f.parent_id = parent ? reinterpret_cast<const char*>(parent) : "";
+        result.push_back(std::move(f));
+    }
+    sqlite3_finalize(stmt);
+    return result;
 }
 
 // --- Files ---
 
 bool Database::create_file(const FileRecord& f) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("INSERT INTO files (id, name, size, disk_name, folder_id, creator) VALUES (?, ?, ?, ?, ?, ?)");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, f.id.c_str(), -1, SQLITE_TRANSIENT);
@@ -318,6 +367,7 @@ bool Database::create_file(const FileRecord& f) {
 }
 
 FileRecord Database::get_file(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     FileRecord f;
     auto stmt = prepare("SELECT id, name, size, disk_name, folder_id, creator, created_at FROM files WHERE id = ?");
     if (!stmt) return f;
@@ -336,6 +386,7 @@ FileRecord Database::get_file(const std::string& id) {
 }
 
 std::vector<FileRecord> Database::get_files_in_folder(const std::string& folder_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<FileRecord> result;
     auto stmt = prepare("SELECT id, name, size, disk_name, folder_id, creator, created_at FROM files WHERE folder_id = ? ORDER BY name");
     if (!stmt) return result;
@@ -355,7 +406,43 @@ std::vector<FileRecord> Database::get_files_in_folder(const std::string& folder_
     return result;
 }
 
+std::vector<FileRecord> Database::get_files_in_folder(const std::string& folder_id, int offset, int limit, int64_t& total) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<FileRecord> result;
+    
+    // Get total count
+    auto count_stmt = prepare("SELECT COUNT(*) FROM files WHERE folder_id = ?");
+    if (count_stmt) {
+        sqlite3_bind_text(count_stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+            total = sqlite3_column_int64(count_stmt, 0);
+        }
+        sqlite3_finalize(count_stmt);
+    }
+    
+    // Get paginated results
+    auto stmt = prepare("SELECT id, name, size, disk_name, folder_id, creator, created_at FROM files WHERE folder_id = ? ORDER BY name LIMIT ? OFFSET ?");
+    if (!stmt) return result;
+    sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, limit);
+    sqlite3_bind_int(stmt, 3, offset);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        FileRecord f;
+        f.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        f.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        f.size = sqlite3_column_int64(stmt, 2);
+        f.disk_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        f.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        f.creator = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        f.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+        result.push_back(std::move(f));
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
 bool Database::rename_file(const std::string& id, const std::string& new_name) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("UPDATE files SET name = ? WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, new_name.c_str(), -1, SQLITE_TRANSIENT);
@@ -366,6 +453,7 @@ bool Database::rename_file(const std::string& id, const std::string& new_name) {
 }
 
 bool Database::delete_file(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // Delete associated shares first
     auto stmt = prepare("DELETE FROM shares WHERE file_id = ?");
     if (stmt) {
@@ -384,6 +472,7 @@ bool Database::delete_file(const std::string& id) {
 // --- Shares ---
 
 bool Database::create_share(const ShareRecord& s) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("INSERT INTO shares (id, file_id, creator, expire_at) VALUES (?, ?, ?, ?)");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, s.id.c_str(), -1, SQLITE_TRANSIENT);
@@ -400,6 +489,7 @@ bool Database::create_share(const ShareRecord& s) {
 }
 
 ShareRecord Database::get_share(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     ShareRecord s;
     auto stmt = prepare(
         "SELECT s.id, s.file_id, f.name, s.creator, s.expire_at, s.created_at "
@@ -420,6 +510,7 @@ ShareRecord Database::get_share(const std::string& id) {
 }
 
 std::vector<ShareRecord> Database::get_shares_by_user(const std::string& user) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<ShareRecord> result;
     auto stmt = prepare(
         "SELECT s.id, s.file_id, f.name, s.creator, s.expire_at, s.created_at "
@@ -442,6 +533,7 @@ std::vector<ShareRecord> Database::get_shares_by_user(const std::string& user) {
 }
 
 bool Database::delete_share(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("DELETE FROM shares WHERE id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
@@ -453,6 +545,7 @@ bool Database::delete_share(const std::string& id) {
 // --- Play History ---
 
 bool Database::init_play_history_schema() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return exec(R"(
         CREATE TABLE IF NOT EXISTS play_history (
             folder_id  TEXT NOT NULL,
@@ -471,6 +564,7 @@ bool Database::init_play_history_schema() {
 
 bool Database::upsert_play_history(const std::string& folder_id, const std::string& file_id, double position, double duration,
                                    const std::string& preset, int audio_index, int subtitle_index, const std::string& external_subtitle_path) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare(
         "INSERT INTO play_history (folder_id, file_id, position, duration, updated_at, preset, audio_index, subtitle_index, external_subtitle_path) "
         "VALUES (?, ?, ?, ?, datetime('now','localtime'), ?, ?, ?, ?) "
@@ -495,6 +589,7 @@ bool Database::upsert_play_history(const std::string& folder_id, const std::stri
 }
 
 std::vector<PlayHistoryRecord> Database::get_all_play_history() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<PlayHistoryRecord> result;
     auto stmt = prepare("SELECT folder_id, file_id, position, duration, updated_at, preset, audio_index, subtitle_index, external_subtitle_path FROM play_history ORDER BY updated_at DESC");
     if (!stmt) return result;
@@ -515,7 +610,47 @@ std::vector<PlayHistoryRecord> Database::get_all_play_history() {
     return result;
 }
 
+std::vector<PlayHistoryRecord> Database::get_play_history_with_names(std::vector<std::pair<std::string, std::string>>& names) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<PlayHistoryRecord> result;
+    auto stmt = prepare(
+        "SELECT ph.folder_id, ph.file_id, ph.position, ph.duration, ph.updated_at, "
+        "ph.preset, ph.audio_index, ph.subtitle_index, ph.external_subtitle_path, "
+        "COALESCE(f.name, ph.folder_id) as folder_name, "
+        "COALESCE(fi.name, ph.file_id) as file_name "
+        "FROM play_history ph "
+        "LEFT JOIN folders f ON ph.folder_id = f.id "
+        "LEFT JOIN files fi ON ph.file_id = fi.id "
+        "ORDER BY ph.updated_at DESC");
+    if (!stmt) return result;
+    names.clear();
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        PlayHistoryRecord r;
+        r.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        r.file_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        r.position = sqlite3_column_double(stmt, 2);
+        r.duration = sqlite3_column_double(stmt, 3);
+        r.updated_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        r.preset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        r.audio_index = sqlite3_column_int(stmt, 6);
+        r.subtitle_index = sqlite3_column_int(stmt, 7);
+        r.external_subtitle_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        
+        auto folder_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+        auto file_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+        names.emplace_back(
+            folder_name ? folder_name : r.folder_id,
+            file_name ? file_name : r.file_id
+        );
+        
+        result.push_back(std::move(r));
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
 bool Database::delete_play_history(const std::string& folder_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("DELETE FROM play_history WHERE folder_id = ?");
     if (!stmt) return false;
     sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
