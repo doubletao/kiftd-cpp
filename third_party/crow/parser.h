@@ -3,6 +3,10 @@
 #include <string>
 #include <unordered_map>
 #include <algorithm>
+#include <fstream>
+#include <cstdio>
+#include <atomic>
+#include <thread>
 
 #include "crow/http_request.h"
 #include "crow/http_parser_merged.h"
@@ -13,6 +17,13 @@ namespace crow
 
     ///
     /// Used to generate a \ref crow.request from the TCP socket buffer.
+    // Streaming threshold: body size (bytes) above which data is written to a temp file
+    // instead of buffered in memory. 0 = disabled.
+    inline size_t streaming_threshold = 0;
+
+    // Temp directory for streaming upload temp files (must end with separator)
+    inline std::string streaming_temp_dir;
+
     template<typename Handler>
     struct HTTPParser : public http_parser
     {
@@ -82,12 +93,34 @@ namespace crow
 
             self->set_connection_parameters();
 
+            // Check if we should stream the body to a temp file
+            if (crow::streaming_threshold > 0)
+            {
+                auto it = self->req.headers.find("Content-Length");
+                if (it != self->req.headers.end())
+                {
+                    try {
+                        size_t content_length = std::stoull(it->second);
+                        if (content_length > streaming_threshold)
+                        {
+                            self->start_streaming(content_length);
+                        }
+                    } catch (...) {}
+                }
+            }
+
             self->process_header();
             return 0;
         }
         static int on_body(http_parser* self_, const char* at, size_t length)
         {
             HTTPParser* self = static_cast<HTTPParser*>(self_);
+            if (self->streaming_ && self->body_ofs_.is_open())
+            {
+                self->body_ofs_.write(at, length);
+                self->body_received_ += length;
+                return self->body_ofs_.good() ? 0 : -1;
+            }
             self->req.body.insert(self->req.body.end(), at, at + length);
             return 0;
         }
@@ -96,6 +129,14 @@ namespace crow
             HTTPParser* self = static_cast<HTTPParser*>(self_);
 
             self->message_complete = true;
+
+            // Finalize streaming: close temp file and set path on request
+            if (self->streaming_)
+            {
+                self->body_ofs_.close();
+                self->req.body_stream_path = self->body_temp_path_;
+            }
+
             self->process_message();
             return 0;
         }
@@ -138,6 +179,7 @@ namespace crow
 
         void clear()
         {
+            close_streaming();
             req = crow::request();
             header_field.clear();
             header_value.clear();
@@ -145,6 +187,26 @@ namespace crow
             qs_point = 0;
             message_complete = false;
             state = CROW_NEW_MESSAGE();
+        }
+
+        void close_streaming()
+        {
+            if (body_ofs_.is_open())
+            {
+                body_ofs_.close();
+            }
+            if (!body_temp_path_.empty())
+            {
+                std::remove(body_temp_path_.c_str());
+                body_temp_path_.clear();
+            }
+            streaming_ = false;
+            body_received_ = 0;
+        }
+
+        ~HTTPParser()
+        {
+            close_streaming();
         }
 
         inline void process_url()
@@ -187,10 +249,32 @@ namespace crow
         request req;
 
     private:
+        void start_streaming(size_t content_length)
+        {
+            // Generate a unique temp file path in the configured temp directory
+            static std::atomic<size_t> counter{0};
+            body_temp_path_ = streaming_temp_dir + "upload_" + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "_" + std::to_string(counter++) + ".crow_stream";
+            body_ofs_.open(body_temp_path_, std::ios::binary);
+            if (body_ofs_.is_open())
+            {
+                streaming_ = true;
+                body_received_ = 0;
+            }
+            else
+            {
+                body_temp_path_.clear();
+            }
+        }
+
         int header_building_state = 0;
         bool message_complete = false;
         std::string header_field;
         std::string header_value;
+
+        bool streaming_ = false;
+        std::ofstream body_ofs_;
+        std::string body_temp_path_;
+        size_t body_received_ = 0;
 
         Handler* handler_; ///< This is currently an HTTP connection object (\ref crow.Connection).
     };

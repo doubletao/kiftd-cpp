@@ -5,10 +5,215 @@
 #include <fstream>
 #include <filesystem>
 #include <stdexcept>
+#include <sstream>
+#include <iostream>
 
 namespace fs = std::filesystem;
 
 namespace kiftd {
+
+// Extract multipart boundary from Content-Type header
+static std::string extract_boundary(const crow::request& req) {
+    auto ct = req.get_header_value("Content-Type");
+    auto pos = ct.find("boundary=");
+    if (pos == std::string::npos) return {};
+    std::string b = ct.substr(pos + 9);
+    if (!b.empty() && b.front() == '"') b = b.substr(1, b.size() - 2);
+    auto semi = b.find(';');
+    if (semi != std::string::npos) b = b.substr(0, semi);
+    return b;
+}
+
+// Process a streamed upload: parse multipart from temp file, stream file data directly to disk.
+// Strategy: read headers into memory to find boundaries, then stream file data between boundaries.
+static bool process_streamed_upload(
+    const std::string& temp_path, const std::string& boundary,
+    FileStore& store, const Config& cfg,
+    std::string& folder_id, std::string& file_name,
+    std::string& disk_name, int64_t& file_size)
+{
+    std::cerr << "[upload-stream] temp_path=" << temp_path << " boundary=" << boundary << std::endl;
+
+    std::ifstream ifs(temp_path, std::ios::binary | std::ios::ate);
+    if (!ifs.is_open()) {
+        std::cerr << "[upload-stream] ERROR: cannot open temp file" << std::endl;
+        return false;
+    }
+
+    int64_t total_file_size = ifs.tellg();
+    ifs.seekg(0);
+    std::cerr << "[upload-stream] total temp file size=" << total_file_size << std::endl;
+
+    std::string delimiter = "--" + boundary;
+    std::string delimiter_end = delimiter + "--";
+
+    // Step 1: Read the first portion of the file to find all boundary markers and parse headers.
+    // For a multipart upload with folder_id + file, the structure is:
+    //   --boundary\r\n headers \r\n \r\n body \r\n --boundary\r\n headers \r\n \r\n file_data \r\n --boundary--\r\n
+    // We read enough to capture the first two delimiters (the file data starts after the second delimiter).
+    
+    const size_t HEADER_BUF_SIZE = 256 * 1024; // 256KB should be more than enough for headers
+    std::string header_buf;
+    header_buf.resize(HEADER_BUF_SIZE);
+    
+    // Read up to HEADER_BUF_SIZE bytes
+    ifs.read(header_buf.data(), HEADER_BUF_SIZE);
+    auto bytes_read = ifs.gcount();
+    header_buf.resize(bytes_read);
+
+    std::cerr << "[upload-stream] read " << bytes_read << " bytes of header" << std::endl;
+
+    // Find the first delimiter (start of first part)
+    size_t first_delim = header_buf.find(delimiter);
+    if (first_delim == std::string::npos) {
+        std::cerr << "[upload-stream] ERROR: first delimiter not found" << std::endl;
+        return false;
+    }
+
+    // Find the second delimiter (start of second part = file part)
+    size_t second_delim_start = first_delim + delimiter.size();
+    // Skip \r\n after delimiter
+    if (second_delim_start + 1 < header_buf.size() && 
+        header_buf[second_delim_start] == '\r' && header_buf[second_delim_start + 1] == '\n') {
+        second_delim_start += 2;
+    }
+    size_t second_delim = header_buf.find(delimiter, second_delim_start);
+    if (second_delim == std::string::npos) {
+        std::cerr << "[upload-stream] ERROR: second delimiter not found" << std::endl;
+        return false;
+    }
+
+    // Parse first part (folder_id) between first and second delimiters
+    std::string first_part = header_buf.substr(first_delim + delimiter.size(), second_delim - first_delim - delimiter.size());
+    // Remove leading \r\n
+    if (first_part.size() >= 2 && first_part[0] == '\r' && first_part[1] == '\n') {
+        first_part = first_part.substr(2);
+    }
+    // Split headers from body at \r\n\r\n
+    auto header_body_sep = first_part.find("\r\n\r\n");
+    if (header_body_sep != std::string::npos) {
+        folder_id = first_part.substr(header_body_sep + 4);
+        // Remove trailing \r\n
+        if (folder_id.size() >= 2 && folder_id.substr(folder_id.size() - 2) == "\r\n") {
+            folder_id.resize(folder_id.size() - 2);
+        }
+    }
+    std::cerr << "[upload-stream] folder_id=[" << folder_id << "]" << std::endl;
+
+    // Parse second part headers (file metadata)
+    size_t second_part_start = second_delim + delimiter.size();
+    // Skip \r\n after delimiter
+    if (second_part_start + 1 < header_buf.size() && 
+        header_buf[second_part_start] == '\r' && header_buf[second_part_start + 1] == '\n') {
+        second_part_start += 2;
+    }
+
+    // Find the end of second part headers (\r\n\r\n)
+    auto second_part_headers_end = header_buf.find("\r\n\r\n", second_part_start);
+    if (second_part_headers_end == std::string::npos) {
+        std::cerr << "[upload-stream] ERROR: second part headers not found (file headers may span beyond read buffer)" << std::endl;
+        return false;
+    }
+
+    std::string second_part_headers = header_buf.substr(second_part_start, second_part_headers_end - second_part_start);
+    
+    // Extract filename
+    auto fn_pos = second_part_headers.find("filename=\"");
+    if (fn_pos != std::string::npos) {
+        auto fn_end = second_part_headers.find("\"", fn_pos + 10);
+        if (fn_end != std::string::npos) {
+            file_name = second_part_headers.substr(fn_pos + 10, fn_end - fn_pos - 10);
+        }
+    }
+    std::cerr << "[upload-stream] file_name=[" << file_name << "]" << std::endl;
+
+    // The file data starts right after the \r\n\r\n of the second part headers
+    auto file_data_start_offset = second_part_headers_end + 4; // skip \r\n\r\n
+    // But file_data_start_offset is relative to header_buf, and header_buf starts at file offset 0
+    // So file_data_start_offset is also the absolute file offset (since we read from the beginning)
+    std::cerr << "[upload-stream] file_data_start_offset=" << file_data_start_offset << std::endl;
+
+    // Find the end boundary: it's \r\n + delimiter_end somewhere in the file
+    // The end boundary should be within the last few bytes of the file
+    // Read the last portion to find it
+    const size_t TAIL_BUF_SIZE = 4096;
+    std::string tail_buf;
+    
+    if (total_file_size > static_cast<std::streamoff>(TAIL_BUF_SIZE + file_data_start_offset)) {
+        // Read the last TAIL_BUF_SIZE bytes
+        auto tail_start = total_file_size - TAIL_BUF_SIZE;
+        ifs.seekg(tail_start);
+        tail_buf.resize(TAIL_BUF_SIZE);
+        ifs.read(tail_buf.data(), TAIL_BUF_SIZE);
+        tail_buf.resize(ifs.gcount());
+    } else {
+        // File is small enough that we already have everything in header_buf
+        tail_buf = header_buf.substr(file_data_start_offset);
+    }
+
+    // Find \r\n + delimiter_end in the tail buffer
+    auto end_boundary_pos_in_tail = tail_buf.find("\r\n" + delimiter_end);
+    
+    // Calculate the absolute file offset where the end boundary starts
+    int64_t file_data_end_offset;
+    if (end_boundary_pos_in_tail != std::string::npos) {
+        // end_boundary_pos_in_tail is relative to the start of tail_buf
+        if (total_file_size > static_cast<std::streamoff>(TAIL_BUF_SIZE + file_data_start_offset)) {
+            file_data_end_offset = (total_file_size - TAIL_BUF_SIZE) + end_boundary_pos_in_tail;
+        } else {
+            file_data_end_offset = file_data_start_offset + end_boundary_pos_in_tail;
+        }
+    } else {
+        // Fallback: search in header_buf (for very small files)
+        auto end_boundary_in_header = header_buf.find("\r\n" + delimiter_end, file_data_start_offset);
+        if (end_boundary_in_header != std::string::npos) {
+            file_data_end_offset = end_boundary_in_header;
+        } else {
+            std::cerr << "[upload-stream] ERROR: end boundary not found" << std::endl;
+            return false;
+        }
+    }
+
+    file_size = file_data_end_offset - file_data_start_offset;
+    std::cerr << "[upload-stream] file_data_end_offset=" << file_data_end_offset 
+              << " file_size=" << file_size << std::endl;
+
+    // Check max upload size
+    if (cfg.max_upload_size > 0 && file_size > cfg.max_upload_size) {
+        std::cerr << "[upload-stream] ERROR: file too large (" << file_size << " > " << cfg.max_upload_size << ")" << std::endl;
+        return false;
+    }
+
+    // Stream file data from temp file directly into the store
+    std::string dest_name = generate_uuid() + ".bin";
+    std::string dest_path = store.get_path(dest_name);
+    std::ofstream file_ofs(dest_path, std::ios::binary);
+    if (!file_ofs.is_open()) {
+        std::cerr << "[upload-stream] ERROR: cannot create temp file for file data" << std::endl;
+        return false;
+    }
+
+    ifs.seekg(file_data_start_offset);
+    const size_t COPY_BUF_SIZE = 256 * 1024;
+    char copy_buf[COPY_BUF_SIZE];
+    int64_t remaining = file_size;
+    while (remaining > 0) {
+        size_t to_read = static_cast<size_t>(std::min(static_cast<int64_t>(COPY_BUF_SIZE), remaining));
+        ifs.read(copy_buf, to_read);
+        auto got = ifs.gcount();
+        if (got == 0) break;
+        file_ofs.write(copy_buf, got);
+        remaining -= got;
+    }
+    file_ofs.close();
+
+    disk_name = dest_name;
+
+    std::cerr << "[upload-stream] success: folder_id=[" << folder_id << "] file_name=[" << file_name 
+              << "] disk_name=[" << disk_name << "] file_size=" << file_size << std::endl;
+
+    return !folder_id.empty() && !disk_name.empty();
+}
 
 void register_file_routes(crow::SimpleApp& app, Database& db, FileStore& store, const Config& cfg) {
 
@@ -19,32 +224,50 @@ void register_file_routes(crow::SimpleApp& app, Database& db, FileStore& store, 
         std::string user = get_user(req, cfg.secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
-        // Parse multipart
-        crow::multipart::message msg(req);
         std::string folder_id;
         std::string file_name;
         std::string disk_name;
         int64_t file_size = 0;
 
-        for (auto& part : msg.parts) {
-            auto it = part.headers.find("Content-Disposition");
-            if (it == part.headers.end()) continue;
+        if (!req.body_stream_path.empty()) {
+            // Streaming path: body was written to a temp file by the parser
+            std::cerr << "[upload] streaming path, body_stream_path=" << req.body_stream_path << std::endl;
+            std::string boundary = extract_boundary(req);
+            if (boundary.empty()) {
+                std::cerr << "[upload] ERROR: missing multipart boundary" << std::endl;
+                return crow::response(400, R"({"error":"missing multipart boundary"})");
+            }
 
-            auto& params = it->second.params;
-            auto name_it = params.find("name");
-            if (name_it == params.end()) continue;
+            if (!process_streamed_upload(req.body_stream_path, boundary, store, cfg,
+                                         folder_id, file_name, disk_name, file_size)) {
+                // Clean up any partially written file in the store
+                if (!disk_name.empty()) store.remove(disk_name);
+                return crow::response(400, R"({"error":"invalid upload or file too large"})");
+            }
 
-            if (name_it->second == "folder_id") {
-                folder_id = std::string(part.body.begin(), part.body.end());
-            } else if (name_it->second == "file") {
-                auto fn_it = params.find("filename");
-                if (fn_it != params.end()) {
-                    file_name = fn_it->second;
+            // file already written directly to store by process_streamed_upload
+        } else {
+            // Normal path: body is in req.body (small files)
+            crow::multipart::message msg(req);
+
+            for (auto& part : msg.parts) {
+                auto it = part.headers.find("Content-Disposition");
+                if (it == part.headers.end()) continue;
+
+                auto& params = it->second.params;
+                auto name_it = params.find("name");
+                if (name_it == params.end()) continue;
+
+                if (name_it->second == "folder_id") {
+                    folder_id = std::string(part.body.begin(), part.body.end());
+                } else if (name_it->second == "file") {
+                    auto fn_it = params.find("filename");
+                    if (fn_it != params.end()) {
+                        file_name = fn_it->second;
+                    }
+                    disk_name = store.save_from_buffer(part.body.data(), part.body.size());
+                    file_size = part.body.size();
                 }
-                
-                // Stream to disk instead of loading into memory
-                disk_name = store.save_from_buffer(part.body.data(), part.body.size());
-                file_size = part.body.size();
             }
         }
 

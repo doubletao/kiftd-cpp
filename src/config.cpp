@@ -16,6 +16,7 @@ Config& Config::instance() {
 void Config::apply_defaults() {
     db_path = data_dir + "/kiftd.db";
     files_dir = data_dir + "/files";
+    temp_dir = data_dir + "/temp";
     if (transcode_dir.empty()) {
         transcode_dir = data_dir + "/transcode";
     }
@@ -23,6 +24,7 @@ void Config::apply_defaults() {
     // Ensure directories exist
     fs::create_directories(data_dir);
     fs::create_directories(files_dir);
+    fs::create_directories(temp_dir);
 }
 
 void Config::load(const std::string& config_path) {
@@ -117,6 +119,7 @@ void Config::load(const std::string& config_path) {
         // Security config
         if (j.contains("secret_key")) secret_key = j["secret_key"].get<std::string>();
         if (j.contains("max_upload_size")) max_upload_size = j["max_upload_size"].get<int64_t>();
+        if (j.contains("upload_stream_threshold")) upload_stream_threshold = j["upload_stream_threshold"].get<int64_t>();
     } catch (const std::exception& e) {
         std::cerr << "Config parse error: " << e.what() << std::endl;
     }

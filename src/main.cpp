@@ -22,6 +22,26 @@
 namespace fs = std::filesystem;
 using namespace kiftd;
 
+// Clean up orphaned temp files from previous crashed/interrupted uploads
+static void cleanup_stale_upload_temps(const std::string& temp_dir) {
+    fs::path dir(temp_dir);
+    if (!fs::exists(dir)) return;
+    int removed = 0;
+    std::error_code ec;
+    for (auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        auto ext = entry.path().extension().string();
+        if (ext == ".crow_stream" || ext == ".upload_data") {
+            std::error_code rm_ec;
+            fs::remove(entry.path(), rm_ec);
+            if (!rm_ec) removed++;
+        }
+    }
+    if (removed > 0) {
+        std::cout << "Cleaned up " << removed << " stale upload temp file(s)" << std::endl;
+    }
+}
+
 static void print_usage() {
     std::cout << "kiftd-cpp - lightweight file server\n"
               << "Usage: kiftd [options]\n"
@@ -159,6 +179,17 @@ int main(int argc, char* argv[]) {
     std::cout << "Starting kiftd-cpp on port " << cfg.port << std::endl;
     std::cout << "Data directory: " << cfg.data_dir << std::endl;
     std::cout << "Web directory: " << cfg.web_dir << std::endl;
+    if (cfg.max_upload_size > 0)
+        std::cout << "Max upload size: " << (cfg.max_upload_size / (1024*1024)) << " MB" << std::endl;
+    else
+        std::cout << "Max upload size: unlimited" << std::endl;
+    std::cout << "Upload stream threshold: " << (cfg.upload_stream_threshold / (1024*1024)) << " MB" << std::endl;
+
+    // Enable streaming for large uploads (body written to temp file instead of memory)
+    crow::streaming_threshold = cfg.upload_stream_threshold;
+    crow::streaming_temp_dir = cfg.temp_dir + "/";
+    fs::create_directories(cfg.temp_dir);
+    cleanup_stale_upload_temps(cfg.temp_dir);
 
     app.port(cfg.port).multithreaded().run();
 

@@ -26,6 +26,7 @@ struct Config {
     std::string data_dir = "data";
     std::string db_path;        // data_dir + "/kiftd.db"
     std::string files_dir;      // data_dir + "/files"
+    std::string temp_dir;       // data_dir + "/temp"
     std::string web_dir;        // "web/dist"
     std::vector<Account> accounts = {{"admin", "admin"}};
     int max_attempts = 5;
@@ -57,7 +58,8 @@ struct Config {
     std::string secret_key;             // for cookie signing
 
     // Upload limits
-    int64_t max_upload_size = 100 * 1024 * 1024;  // 100MB default
+    int64_t max_upload_size = 0;            // 0 = unlimited
+    int64_t upload_stream_threshold = 100 * 1024 * 1024;  // 100MB: body size above this streams to temp file
 
     static Config& instance();
     void load(const std::string& config_path);

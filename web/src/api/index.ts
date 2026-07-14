@@ -58,6 +58,7 @@ export const uploadFile = (folderId: string, file: File, onProgress?: (p: number
   form.append('file', file)
   return api.post('/files/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 0,
     onUploadProgress: onProgress ? (e) => onProgress(Math.round((e.loaded / (e.total || 1)) * 100)) : undefined
   })
 }
