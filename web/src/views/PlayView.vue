@@ -186,25 +186,37 @@ async function loadFolder() {
     const res = await getFolder(folderId.value)
     const files: { id: string; name: string }[] = res.data.files
 
-    // Filter video files and get transcode status
+    // Filter video files
     const vids: VideoFile[] = []
+    const needTranscodeCheck: string[] = []
     for (const f of files) {
       const ext = getExt(f.name)
       if (!allVideoExts.includes(ext)) continue
       const canPlayDirect = directPlayExts.includes(ext)
-      let transcoded = canPlayDirect
+      vids.push({ id: f.id, name: f.name, transcoded: canPlayDirect, canPlayDirect })
       if (!canPlayDirect && transcodeEnabled.value) {
-        try {
-          const sRes = await getTranscodeStatus(f.id)
-          const status = sRes.data.status || 'none'
-          transcodeStatuses.value[f.id] = status
-          transcoded = status === 'done'
-        } catch { /* ignore */ }
+        needTranscodeCheck.push(f.id)
       }
-      vids.push({ id: f.id, name: f.name, transcoded, canPlayDirect })
     }
     // Sort by name
     vids.sort((a, b) => a.name.localeCompare(b.name))
+
+    // Batch fetch transcode statuses in parallel
+    if (needTranscodeCheck.length > 0) {
+      const statusResults = await Promise.allSettled(
+        needTranscodeCheck.map(id => getTranscodeStatus(id))
+      )
+      for (let i = 0; i < needTranscodeCheck.length; i++) {
+        const id = needTranscodeCheck[i]
+        const result = statusResults[i]
+        if (result.status === 'fulfilled') {
+          const status = result.value.data.status || 'none'
+          transcodeStatuses.value[id] = status
+          const v = vids.find(v => v.id === id)
+          if (v) v.transcoded = status === 'done'
+        }
+      }
+    }
     videoFiles.value = vids
 
     // Load play history

@@ -391,7 +391,16 @@ void register_file_routes(crow::SimpleApp& app, Database& db, FileStore& store, 
                     return res;
                 }
             } else {
-                res.set_static_file_info(path);
+                // No Range header: return first 1MB to avoid sending entire file
+                uint64_t length = std::min(static_cast<uint64_t>(1024 * 1024), file_size);
+                std::ifstream ifs(path, std::ios::binary);
+                std::string buf(length, '\0');
+                ifs.read(buf.data(), length);
+
+                res.code = 206;
+                res.body = buf;
+                res.add_header("Content-Range", "bytes 0-" + std::to_string(length - 1) + "/" + std::to_string(file_size));
+                res.add_header("Content-Length", std::to_string(length));
             }
 
             res.add_header("Content-Type", ct);
