@@ -2,10 +2,15 @@
 #include "utils/uuid.h"
 #include "utils/common.h"
 #include <nlohmann/json.hpp>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 namespace kiftd {
 
-void register_folder_routes(crow::SimpleApp& app, Database& db, const std::string& secret_key) {
+void register_folder_routes(crow::SimpleApp& app, Database& db, FileStore& store,
+                            TranscodeManager& transcode_mgr, const Config& cfg,
+                            const std::string& secret_key) {
 
     // GET /api/folders/<string> - get folder contents
     CROW_ROUTE(app, "/api/folders/<string>")
@@ -152,15 +157,35 @@ void register_folder_routes(crow::SimpleApp& app, Database& db, const std::strin
     // DELETE /api/folders/<string> - delete folder
     CROW_ROUTE(app, "/api/folders/<string>")
         .methods("DELETE"_method)
-    ([&db, &secret_key](const crow::request& req, const std::string& folder_id) {
+    ([&db, &store, &transcode_mgr, &cfg, &secret_key](const crow::request& req, const std::string& folder_id) {
         std::string user = get_user(req, secret_key);
         if (user.empty()) return crow::response(401, R"({"error":"not logged in"})");
 
         auto folder = db.get_folder(folder_id);
         if (folder.id.empty()) return crow::response(404, R"({"error":"folder not found"})");
 
+        // Collect all disk_names and file_ids before deleting DB records
+        auto disk_names = db.get_all_disk_names_in_folder(folder_id);
+        auto file_ids = db.get_all_file_ids_in_folder(folder_id);
+
+        // Remove play history before delete_folder (needs subfolder records to exist)
+        db.delete_all_play_history_in_folder(folder_id);
+
         if (!db.delete_folder(folder_id)) {
             return crow::response(500, R"({"error":"delete failed"})");
+        }
+
+        // Remove physical files from disk
+        for (auto& dn : disk_names) {
+            store.remove(dn);
+        }
+
+        // Remove transcode caches
+        for (auto& fid : file_ids) {
+            transcode_mgr.cancel(fid);
+            std::string cache_dir = cfg.transcode_dir + "/" + fid;
+            std::error_code ec;
+            fs::remove_all(fs::path(cache_dir), ec);
         }
 
         return crow::response(200, R"({"ok":true})");

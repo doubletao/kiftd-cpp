@@ -287,6 +287,48 @@ bool Database::delete_folder(const std::string& id) {
     return ok;
 }
 
+std::vector<std::string> Database::get_all_disk_names_in_folder(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<std::string> result;
+    // Collect disk_names from files in this folder
+    auto stmt = prepare("SELECT disk_name FROM files WHERE folder_id = ?");
+    if (stmt) {
+        sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            if (name) result.push_back(name);
+        }
+        sqlite3_finalize(stmt);
+    }
+    // Recurse into subfolders
+    auto sub = get_subfolders(id);
+    for (auto& sf : sub) {
+        auto sub_names = get_all_disk_names_in_folder(sf.id);
+        result.insert(result.end(), sub_names.begin(), sub_names.end());
+    }
+    return result;
+}
+
+std::vector<std::string> Database::get_all_file_ids_in_folder(const std::string& id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<std::string> result;
+    auto stmt = prepare("SELECT id FROM files WHERE folder_id = ?");
+    if (stmt) {
+        sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char* fid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            if (fid) result.push_back(fid);
+        }
+        sqlite3_finalize(stmt);
+    }
+    auto sub = get_subfolders(id);
+    for (auto& sf : sub) {
+        auto sub_ids = get_all_file_ids_in_folder(sf.id);
+        result.insert(result.end(), sub_ids.begin(), sub_ids.end());
+    }
+    return result;
+}
+
 bool Database::has_children(const std::string& folder_id) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto stmt = prepare("SELECT 1 FROM folders WHERE parent_id = ? UNION ALL SELECT 1 FROM files WHERE folder_id = ? LIMIT 1");
@@ -657,6 +699,15 @@ bool Database::delete_play_history(const std::string& folder_id) {
     bool ok = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     return ok;
+}
+
+bool Database::delete_all_play_history_in_folder(const std::string& folder_id) {
+    delete_play_history(folder_id);
+    auto sub = get_subfolders(folder_id);
+    for (auto& sf : sub) {
+        delete_all_play_history_in_folder(sf.id);
+    }
+    return true;
 }
 
 } // namespace kiftd

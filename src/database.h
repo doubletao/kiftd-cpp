@@ -83,6 +83,8 @@ public:
     std::vector<Folder> get_subfolders(const std::string& parent_id);
     bool rename_folder(const std::string& id, const std::string& new_name);
     bool delete_folder(const std::string& id);
+    std::vector<std::string> get_all_disk_names_in_folder(const std::string& id);
+    std::vector<std::string> get_all_file_ids_in_folder(const std::string& id);
     bool has_children(const std::string& folder_id);
     std::string get_folder_path(const std::string& folder_id);
     std::vector<Folder> get_folder_ancestors(const std::string& folder_id);
@@ -108,6 +110,7 @@ public:
     std::vector<PlayHistoryRecord> get_all_play_history();
     std::vector<PlayHistoryRecord> get_play_history_with_names(std::vector<std::pair<std::string, std::string>>& names);
     bool delete_play_history(const std::string& folder_id);
+    bool delete_all_play_history_in_folder(const std::string& folder_id);
 
 private:
     sqlite3* db_ = nullptr;

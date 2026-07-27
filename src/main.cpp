@@ -130,7 +130,7 @@ int main(int argc, char* argv[]) {
     register_auth_routes(app, db, auth, cfg);
     register_admin_routes(app, db, auth, cfg.secret_key);
     register_user_routes(app, db, auth, cfg.secret_key);
-    register_folder_routes(app, db, cfg.secret_key);
+    register_folder_routes(app, db, file_store, transcode_mgr, cfg, cfg.secret_key);
     register_file_routes(app, db, file_store, cfg);
     register_share_routes(app, db, file_store, cfg.secret_key);
     register_transcode_routes(app, db, file_store, transcode_mgr, live_segmenter, cfg);
