@@ -20,7 +20,10 @@ std::string get_content_type(const std::string& filename);
 std::wstring utf8_to_wide(const std::string& s);
 #endif
 
-// FFmpeg path escaping
+// FFmpeg path escaping (for vf filter graph arguments)
 std::string escape_vf_path(const std::string& path);
+
+// Validate that a path is safe to pass to external processes (no shell metacharacters)
+bool is_safe_path(const std::string& path);
 
 } // namespace kiftd

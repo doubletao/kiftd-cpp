@@ -3,6 +3,11 @@
 
 namespace kiftd {
 
+static const char* safe_column_text(sqlite3_stmt* stmt, int col) {
+    auto p = sqlite3_column_text(stmt, col);
+    return p ? reinterpret_cast<const char*>(p) : "";
+}
+
 Database::Database() = default;
 
 Database::~Database() {
@@ -111,11 +116,11 @@ User Database::get_user(const std::string& id) {
     if (!stmt) return u;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        u.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        u.password_hash = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        u.salt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        u.role = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-        u.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        u.id = safe_column_text(stmt, 0);
+        u.password_hash = safe_column_text(stmt, 1);
+        u.salt = safe_column_text(stmt, 2);
+        u.role = safe_column_text(stmt, 3);
+        u.created_at = safe_column_text(stmt, 4);
     }
     sqlite3_finalize(stmt);
     return u;
@@ -153,7 +158,7 @@ std::string Database::get_user_role(const std::string& id) {
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
     std::string role;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        role = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        role = safe_column_text(stmt, 0);
     }
     sqlite3_finalize(stmt);
     return role;
@@ -166,11 +171,11 @@ std::vector<User> Database::get_all_users() {
     if (!stmt) return users;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         User u;
-        u.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        u.password_hash = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        u.salt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        u.role = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-        u.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        u.id = safe_column_text(stmt, 0);
+        u.password_hash = safe_column_text(stmt, 1);
+        u.salt = safe_column_text(stmt, 2);
+        u.role = safe_column_text(stmt, 3);
+        u.created_at = safe_column_text(stmt, 4);
         users.push_back(std::move(u));
     }
     sqlite3_finalize(stmt);
@@ -416,13 +421,13 @@ FileRecord Database::get_file(const std::string& id) {
     if (!stmt) return f;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        f.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        f.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        f.id = safe_column_text(stmt, 0);
+        f.name = safe_column_text(stmt, 1);
         f.size = sqlite3_column_int64(stmt, 2);
-        f.disk_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-        f.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-        f.creator = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-        f.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+        f.disk_name = safe_column_text(stmt, 3);
+        f.folder_id = safe_column_text(stmt, 4);
+        f.creator = safe_column_text(stmt, 5);
+        f.created_at = safe_column_text(stmt, 6);
     }
     sqlite3_finalize(stmt);
     return f;
@@ -436,13 +441,13 @@ std::vector<FileRecord> Database::get_files_in_folder(const std::string& folder_
     sqlite3_bind_text(stmt, 1, folder_id.c_str(), -1, SQLITE_TRANSIENT);
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         FileRecord f;
-        f.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        f.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        f.id = safe_column_text(stmt, 0);
+        f.name = safe_column_text(stmt, 1);
         f.size = sqlite3_column_int64(stmt, 2);
-        f.disk_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-        f.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-        f.creator = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-        f.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+        f.disk_name = safe_column_text(stmt, 3);
+        f.folder_id = safe_column_text(stmt, 4);
+        f.creator = safe_column_text(stmt, 5);
+        f.created_at = safe_column_text(stmt, 6);
         result.push_back(std::move(f));
     }
     sqlite3_finalize(stmt);
@@ -471,13 +476,13 @@ std::vector<FileRecord> Database::get_files_in_folder(const std::string& folder_
     sqlite3_bind_int(stmt, 3, offset);
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         FileRecord f;
-        f.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        f.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        f.id = safe_column_text(stmt, 0);
+        f.name = safe_column_text(stmt, 1);
         f.size = sqlite3_column_int64(stmt, 2);
-        f.disk_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-        f.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-        f.creator = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-        f.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+        f.disk_name = safe_column_text(stmt, 3);
+        f.folder_id = safe_column_text(stmt, 4);
+        f.creator = safe_column_text(stmt, 5);
+        f.created_at = safe_column_text(stmt, 6);
         result.push_back(std::move(f));
     }
     sqlite3_finalize(stmt);
@@ -540,13 +545,13 @@ ShareRecord Database::get_share(const std::string& id) {
     if (!stmt) return s;
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        s.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        s.file_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        s.file_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        s.creator = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        s.id = safe_column_text(stmt, 0);
+        s.file_id = safe_column_text(stmt, 1);
+        s.file_name = safe_column_text(stmt, 2);
+        s.creator = safe_column_text(stmt, 3);
         auto expire = sqlite3_column_text(stmt, 4);
         s.expire_at = expire ? reinterpret_cast<const char*>(expire) : "";
-        s.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        s.created_at = safe_column_text(stmt, 5);
     }
     sqlite3_finalize(stmt);
     return s;
@@ -562,13 +567,13 @@ std::vector<ShareRecord> Database::get_shares_by_user(const std::string& user) {
     sqlite3_bind_text(stmt, 1, user.c_str(), -1, SQLITE_TRANSIENT);
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         ShareRecord s;
-        s.id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        s.file_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        s.file_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        s.creator = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        s.id = safe_column_text(stmt, 0);
+        s.file_id = safe_column_text(stmt, 1);
+        s.file_name = safe_column_text(stmt, 2);
+        s.creator = safe_column_text(stmt, 3);
         auto expire = sqlite3_column_text(stmt, 4);
         s.expire_at = expire ? reinterpret_cast<const char*>(expire) : "";
-        s.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        s.created_at = safe_column_text(stmt, 5);
         result.push_back(std::move(s));
     }
     sqlite3_finalize(stmt);
@@ -638,15 +643,15 @@ std::vector<PlayHistoryRecord> Database::get_all_play_history() {
     if (!stmt) return result;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         PlayHistoryRecord r;
-        r.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        r.file_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        r.folder_id = safe_column_text(stmt, 0);
+        r.file_id = safe_column_text(stmt, 1);
         r.position = sqlite3_column_double(stmt, 2);
         r.duration = sqlite3_column_double(stmt, 3);
-        r.updated_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-        r.preset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        r.updated_at = safe_column_text(stmt, 4);
+        r.preset = safe_column_text(stmt, 5);
         r.audio_index = sqlite3_column_int(stmt, 6);
         r.subtitle_index = sqlite3_column_int(stmt, 7);
-        r.external_subtitle_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        r.external_subtitle_path = safe_column_text(stmt, 8);
         result.push_back(std::move(r));
     }
     sqlite3_finalize(stmt);
@@ -669,21 +674,21 @@ std::vector<PlayHistoryRecord> Database::get_play_history_with_names(std::vector
     names.clear();
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         PlayHistoryRecord r;
-        r.folder_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        r.file_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        r.folder_id = safe_column_text(stmt, 0);
+        r.file_id = safe_column_text(stmt, 1);
         r.position = sqlite3_column_double(stmt, 2);
         r.duration = sqlite3_column_double(stmt, 3);
-        r.updated_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-        r.preset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        r.updated_at = safe_column_text(stmt, 4);
+        r.preset = safe_column_text(stmt, 5);
         r.audio_index = sqlite3_column_int(stmt, 6);
         r.subtitle_index = sqlite3_column_int(stmt, 7);
-        r.external_subtitle_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        r.external_subtitle_path = safe_column_text(stmt, 8);
         
-        auto folder_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
-        auto file_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+        auto folder_name = sqlite3_column_text(stmt, 9);
+        auto file_name = sqlite3_column_text(stmt, 10);
         names.emplace_back(
-            folder_name ? folder_name : r.folder_id,
-            file_name ? file_name : r.file_id
+            folder_name ? reinterpret_cast<const char*>(folder_name) : r.folder_id,
+            file_name ? reinterpret_cast<const char*>(file_name) : r.file_id
         );
         
         result.push_back(std::move(r));

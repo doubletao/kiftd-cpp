@@ -52,7 +52,7 @@ std::string get_user(const crow::request& req, const std::string& secret_key) {
     std::string value = cookie.substr(start, end == std::string::npos ? std::string::npos : end - start);
     
     if (secret_key.empty()) {
-        return value;
+        return "";  // Refuse to authenticate without a secret key
     }
     return verify_cookie(value, secret_key);
 }
@@ -101,12 +101,27 @@ std::string escape_vf_path(const std::string& path) {
     std::string result;
     result.reserve(path.size() * 2);
     for (char c : path) {
-        if (c == '\\' || c == '\'' || c == ':' || c == '[' || c == ']') {
+        if (c == '\\' || c == '\'' || c == ':' || c == '[' || c == ']' || c == ';' || c == '#') {
             result += '\\';
         }
         result += c;
     }
     return result;
+}
+
+bool is_safe_path(const std::string& path) {
+    if (path.empty()) return false;
+    // Reject paths containing shell metacharacters
+    for (char c : path) {
+        if (c == ';' || c == '|' || c == '&' || c == '$' || c == '`' ||
+            c == '(' || c == ')' || c == '{' || c == '}' ||
+            c == '<' || c == '>' || c == '\n' || c == '\r') {
+            return false;
+        }
+    }
+    // Reject path traversal
+    if (path.find("..") != std::string::npos) return false;
+    return true;
 }
 
 } // namespace kiftd

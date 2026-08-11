@@ -537,29 +537,45 @@ async function shareFile(fileId: string) {
 async function renameFolderPrompt(folder: any) {
   const name = prompt('New name:', folder.name)
   if (name && name !== folder.name) {
-    await renameFolder(folder.id, name)
-    loadFolder(currentFolderId.value)
+    try {
+      await renameFolder(folder.id, name)
+      loadFolder(currentFolderId.value)
+    } catch (e: any) {
+      alert(e.response?.data?.error || 'Rename failed')
+    }
   }
 }
 
 async function removeFolder(id: string) {
   if (!confirm('Delete this folder and all its contents?')) return
-  await deleteFolder(id)
-  loadFolder(currentFolderId.value)
+  try {
+    await deleteFolder(id)
+    loadFolder(currentFolderId.value)
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Delete failed')
+  }
 }
 
 async function renameFilePrompt(file: any) {
   const name = prompt('New name:', file.name)
   if (name && name !== file.name) {
-    await renameFile(file.id, name)
-    loadFolder(currentFolderId.value)
+    try {
+      await renameFile(file.id, name)
+      loadFolder(currentFolderId.value)
+    } catch (e: any) {
+      alert(e.response?.data?.error || 'Rename failed')
+    }
   }
 }
 
 async function removeFile(id: string) {
   if (!confirm('Delete this file?')) return
-  await deleteFile(id)
-  loadFolder(currentFolderId.value)
+  try {
+    await deleteFile(id)
+    loadFolder(currentFolderId.value)
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Delete failed')
+  }
 }
 
 function formatSize(bytes: number): string {

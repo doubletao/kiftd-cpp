@@ -288,8 +288,13 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
         std::string input_path = store.get_path(file.disk_name);
         if (!fs::exists(input_path)) return crow::response(404, R"({"error":"file missing"})");
 
-        if (!external_subtitle_path.empty() && !fs::exists(external_subtitle_path)) {
-            return crow::response(400, R"({"error":"external subtitle file not found"})");
+        if (!external_subtitle_path.empty()) {
+            if (!is_safe_path(external_subtitle_path)) {
+                return crow::response(400, R"({"error":"invalid external subtitle path"})");
+            }
+            if (!fs::exists(external_subtitle_path) || !fs::is_regular_file(external_subtitle_path)) {
+                return crow::response(400, R"({"error":"external subtitle file not found"})");
+            }
         }
 
         std::string cache_path = build_cache_path(cfg, db, file);
@@ -420,37 +425,43 @@ void register_transcode_routes(crow::SimpleApp& app, Database& db, FileStore& st
         uint64_t file_size = fs::file_size(cache_path);
 
         if (!range_header.empty() && range_header.find("bytes=") == 0) {
-            std::string range_val = range_header.substr(6);
-            auto dash_pos = range_val.find('-');
-            uint64_t start = 0, end = file_size - 1;
+            try {
+                std::string range_val = range_header.substr(6);
+                auto dash_pos = range_val.find('-');
+                uint64_t start = 0, end = file_size - 1;
 
-            if (dash_pos == 0) {
-                start = file_size - std::stoull(range_val.substr(1));
-            } else if (dash_pos == std::string::npos) {
-                start = std::stoull(range_val);
-            } else {
-                start = std::stoull(range_val.substr(0, dash_pos));
-                if (dash_pos + 1 < range_val.size()) {
-                    end = std::stoull(range_val.substr(dash_pos + 1));
+                if (dash_pos == 0) {
+                    start = file_size - std::stoull(range_val.substr(1));
+                } else if (dash_pos == std::string::npos) {
+                    start = std::stoull(range_val);
+                } else {
+                    start = std::stoull(range_val.substr(0, dash_pos));
+                    if (dash_pos + 1 < range_val.size()) {
+                        end = std::stoull(range_val.substr(dash_pos + 1));
+                    }
                 }
-            }
 
-            if (start >= file_size) {
+                if (start >= file_size) {
+                    res.code = 416;
+                    res.add_header("Content-Range", "bytes */" + std::to_string(file_size));
+                    return res;
+                }
+
+                uint64_t length = end - start + 1;
+                std::ifstream ifs(cache_path, std::ios::binary);
+                ifs.seekg(start);
+                std::string buf(length, '\0');
+                ifs.read(buf.data(), length);
+
+                res.code = 206;
+                res.body = buf;
+                res.add_header("Content-Range", "bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(file_size));
+                res.add_header("Content-Length", std::to_string(length));
+            } catch (const std::exception&) {
                 res.code = 416;
                 res.add_header("Content-Range", "bytes */" + std::to_string(file_size));
                 return res;
             }
-
-            uint64_t length = end - start + 1;
-            std::ifstream ifs(cache_path, std::ios::binary);
-            ifs.seekg(start);
-            std::string buf(length, '\0');
-            ifs.read(buf.data(), length);
-
-            res.code = 206;
-            res.body = buf;
-            res.add_header("Content-Range", "bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(file_size));
-            res.add_header("Content-Length", std::to_string(length));
         } else {
             res.set_static_file_info(cache_path);
         }

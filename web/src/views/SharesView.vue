@@ -93,8 +93,12 @@ async function copyLink(id: string) {
 
 async function removeShare(id: string) {
   if (!confirm('Delete this share?')) return
-  await deleteShare(id)
-  loadShares()
+  try {
+    await deleteShare(id)
+    loadShares()
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Delete failed')
+  }
 }
 
 async function handleLogout() {
