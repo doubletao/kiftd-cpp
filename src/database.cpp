@@ -388,6 +388,7 @@ std::vector<Folder> Database::get_folder_ancestors(const std::string& folder_id)
         result.push_back(std::move(f));
     }
     sqlite3_finalize(stmt);
+    std::reverse(result.begin(), result.end());
     return result;
 }
 
