@@ -35,6 +35,10 @@
           Upload
           <input type="file" multiple @change="handleUpload" style="display:none" />
         </label>
+        <label class="btn btn-upload">
+          Upload Folder
+          <input type="file" webkitdirectory @change="handleUpload" style="display:none" />
+        </label>
       </div>
     </div>
 
@@ -53,7 +57,7 @@
     <!-- Upload progress -->
     <div v-if="uploading" class="upload-bar">
       <div class="upload-progress" :style="{ width: uploadProgress + '%' }"></div>
-      <span>{{ uploadProgress }}%</span>
+      <span class="upload-status">{{ uploadStatus || uploadProgress + '%' }}</span>
     </div>
 
     <!-- Content -->
@@ -143,7 +147,7 @@
     <div v-if="dragging" class="drop-overlay">
       <div class="drop-hint">
         <span class="drop-icon">&#128229;</span>
-        <span>Drop files here to upload</span>
+        <span>Drop files or folders here to upload</span>
       </div>
     </div>
   </div>
@@ -171,6 +175,7 @@ const newFolderName = ref('')
 
 const uploading = ref(false)
 const uploadProgress = ref(0)
+const uploadStatus = ref('')
 
 const showPreview = ref(false)
 const previewFileId = ref('')
@@ -228,6 +233,11 @@ function onDragLeave() {
   }
 }
 
+interface FileEntry {
+  file: File
+  path: string
+}
+
 async function onDrop(e: DragEvent) {
   dragging.value = false
   dragCounter = 0
@@ -236,15 +246,151 @@ async function onDrop(e: DragEvent) {
   if (!items?.length) return
 
   const fileList: File[] = []
+  const folderEntries: FileEntry[] = []
+  let hasFolder = false
+
   for (let i = 0; i < items.length; i++) {
     const entry = items[i].webkitGetAsEntry?.()
-    if (entry && entry.isFile) {
+    if (!entry) continue
+
+    if (entry.isFile) {
       fileList.push(items[i].getAsFile()!)
+    } else if (entry.isDirectory) {
+      hasFolder = true
+      const entries = await readEntryRecursive(entry, '')
+      folderEntries.push(...entries)
     }
   }
 
-  if (!fileList.length) return
-  await uploadFiles(fileList)
+  if (hasFolder && folderEntries.length > 0) {
+    await uploadFolderEntries(folderEntries)
+  }
+
+  if (fileList.length > 0) {
+    await uploadFiles(fileList)
+  }
+}
+
+function readEntryRecursive(entry: FileSystemEntry, basePath: string): Promise<FileEntry[]> {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      (entry as FileSystemFileEntry).file((file) => {
+        const path = basePath ? `${basePath}/${entry.name}` : entry.name
+        resolve([{ file, path }])
+      })
+    } else if (entry.isDirectory) {
+      const dirReader = (entry as FileSystemDirectoryEntry).createReader()
+      const allEntries: FileEntry[] = []
+      const dirPath = basePath ? `${basePath}/${entry.name}` : entry.name
+
+      function readBatch() {
+        dirReader.readEntries(async (entries) => {
+          if (entries.length === 0) {
+            resolve(allEntries)
+            return
+          }
+          for (const childEntry of entries) {
+            const childEntries = await readEntryRecursive(childEntry, dirPath)
+            allEntries.push(...childEntries)
+          }
+          readBatch()
+        })
+      }
+      readBatch()
+    } else {
+      resolve([])
+    }
+  })
+}
+
+interface FolderNode {
+  name: string
+  path: string
+  children: Map<string, FolderNode>
+  files: FileEntry[]
+}
+
+function buildFolderTree(entries: FileEntry[]): FolderNode {
+  const root: FolderNode = { name: '', path: '', children: new Map(), files: [] }
+
+  for (const entry of entries) {
+    const parts = entry.path.split('/')
+    let current = root
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i]
+      if (!current.children.has(part)) {
+        const childPath = parts.slice(0, i + 1).join('/')
+        current.children.set(part, {
+          name: part,
+          path: childPath,
+          children: new Map(),
+          files: []
+        })
+      }
+      current = current.children.get(part)!
+    }
+
+    current.files.push(entry)
+  }
+
+  return root
+}
+
+async function createFoldersRecursively(
+  node: FolderNode,
+  parentId: string,
+  folderMap: Map<string, string>
+): Promise<void> {
+  for (const [name, child] of node.children) {
+    try {
+      const res = await createFolder(name, parentId)
+      const folderId = res.data.id
+      folderMap.set(child.path, folderId)
+      await createFoldersRecursively(child, folderId, folderMap)
+    } catch (e: any) {
+      console.error(`Failed to create folder ${name}:`, e)
+    }
+  }
+}
+
+async function uploadFolderEntries(entries: FileEntry[]) {
+  if (!entries.length) return
+
+  uploading.value = true
+  uploadProgress.value = 0
+  uploadStatus.value = 'Creating folders...'
+
+  try {
+    const tree = buildFolderTree(entries)
+    const folderMap = new Map<string, string>()
+
+    await createFoldersRecursively(tree, currentFolderId.value, folderMap)
+
+    const totalFiles = entries.length
+    let uploadedFiles = 0
+
+    for (const entry of entries) {
+      const parts = entry.path.split('/')
+      const filePath = parts.slice(0, -1).join('/')
+      const targetFolderId = filePath ? (folderMap.get(filePath) || currentFolderId.value) : currentFolderId.value
+
+      uploadStatus.value = `Uploading ${entry.file.name}...`
+      await uploadFile(targetFolderId, entry.file, (p) => {
+        const fileProgress = p / 100
+        uploadProgress.value = Math.round(((uploadedFiles + fileProgress) / totalFiles) * 100)
+      })
+      uploadedFiles++
+    }
+
+    uploadStatus.value = 'Upload complete!'
+    loadFolder(currentFolderId.value)
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Folder upload failed')
+  } finally {
+    uploading.value = false
+    uploadStatus.value = ''
+  }
 }
 
 async function loadTranscodeConfig() {
@@ -321,7 +467,18 @@ async function createNewFolder() {
 async function handleUpload(e: Event) {
   const input = e.target as HTMLInputElement
   if (!input.files?.length) return
-  await uploadFiles(Array.from(input.files))
+  const fileList = Array.from(input.files)
+
+  const hasRelativePath = fileList.some(f => (f as any).webkitRelativePath)
+  if (hasRelativePath) {
+    const entries: FileEntry[] = fileList.map(f => ({
+      file: f,
+      path: (f as any).webkitRelativePath || f.name
+    }))
+    await uploadFolderEntries(entries)
+  } else {
+    await uploadFiles(fileList)
+  }
   input.value = ''
 }
 
@@ -784,14 +941,27 @@ onUnmounted(() => stopPolling())
   top: 56px;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 24px;
   background: #eee;
   z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: #666;
 }
 .upload-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
   height: 100%;
   background: #667eea;
   transition: width 0.2s;
+  opacity: 0.3;
+}
+.upload-status {
+  position: relative;
+  z-index: 1;
 }
 .drop-overlay {
   position: fixed;
