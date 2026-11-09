@@ -4,14 +4,24 @@ project(kiftd-cpp VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Single-config generators (Makefiles/Ninja) need an explicit build type
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 if(MSVC)
     add_compile_options(/bigobj)
 endif()
 
+find_package(Threads REQUIRED)
+
 # Asio (standalone, header-only)
 add_library(asio INTERFACE)
 target_include_directories(asio INTERFACE third_party)
-target_compile_definitions(asio INTERFACE ASIO_STANDALONE _WIN32_WINNT=0x0601)
+target_compile_definitions(asio INTERFACE ASIO_STANDALONE)
+if(WIN32)
+    target_compile_definitions(asio INTERFACE _WIN32_WINNT=0x0601)
+endif()
 
 # nlohmann/json (header-only)
 add_library(nlohmann_json INTERFACE)
@@ -21,6 +31,7 @@ target_include_directories(nlohmann_json INTERFACE third_party)
 add_library(sqlite3 STATIC third_party/sqlite3/sqlite3.c)
 target_include_directories(sqlite3 PUBLIC third_party/sqlite3)
 target_compile_definitions(sqlite3 PRIVATE SQLITE_THREADSAFE=1)
+target_link_libraries(sqlite3 PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 
 # Crow (header-only, local)
 add_library(crow INTERFACE)
@@ -55,6 +66,7 @@ target_link_libraries(kiftd PRIVATE
     crow
     nlohmann_json
     sqlite3
+    Threads::Threads
 )
 
 if(WIN32)

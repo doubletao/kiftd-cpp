@@ -10,6 +10,8 @@
 #include <stringapiset.h>
 #else
 #include <cstdlib>
+#include <csignal>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
