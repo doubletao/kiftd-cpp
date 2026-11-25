@@ -72,3 +72,22 @@ target_link_libraries(kiftd PRIVATE
 if(WIN32)
     target_link_libraries(kiftd PRIVATE ws2_32)
 endif()
+
+# HTTPS support (LibreSSL, built from local source as static libs)
+option(KIFTD_ENABLE_SSL "Enable HTTPS support via bundled LibreSSL" ON)
+if(KIFTD_ENABLE_SSL)
+    set(LIBRESSL_APPS OFF CACHE BOOL "" FORCE)
+    set(LIBRESSL_TESTS OFF CACHE BOOL "" FORCE)
+    set(LIBRESSL_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third_party/libressl EXCLUDE_FROM_ALL)
+    # MSVC (verified on VS2019 14.29) miscompiles bn_mont.c with optimization on,
+    # breaking RSA/EC math and every TLS handshake; LibreSSL's own tests catch it.
+    if(MSVC)
+        set_source_files_properties(third_party/libressl/crypto/bn/bn_mont.c
+            DIRECTORY third_party/libressl/crypto
+            PROPERTIES COMPILE_OPTIONS /Od)
+    endif()
+    target_compile_definitions(kiftd PRIVATE CROW_ENABLE_SSL)
+    target_link_libraries(kiftd PRIVATE ssl crypto)
+endif()

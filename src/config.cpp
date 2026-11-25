@@ -42,6 +42,9 @@ void Config::load(const std::string& config_path) {
     try {
         nlohmann::json j = nlohmann::json::parse(ifs);
         if (j.contains("port")) port = j["port"].get<int>();
+        if (j.contains("protocol")) protocol = j["protocol"].get<std::string>();
+        if (j.contains("ssl_cert")) ssl_cert = j["ssl_cert"].get<std::string>();
+        if (j.contains("ssl_key")) ssl_key = j["ssl_key"].get<std::string>();
         if (j.contains("data_dir")) {
             data_dir = j["data_dir"].get<std::string>();
             transcode_dir = "";  // reset so apply_defaults recalculates

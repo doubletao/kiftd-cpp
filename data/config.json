@@ -1,5 +1,8 @@
 {
   "port": 8081,
+  "protocol": "http",
+  "ssl_cert": "",
+  "ssl_key": "",
   "data_dir": "data",
   "accounts": [
     {

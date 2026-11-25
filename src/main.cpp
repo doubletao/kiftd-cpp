@@ -42,6 +42,31 @@ static void cleanup_stale_upload_temps(const std::string& temp_dir) {
     }
 }
 
+static bool validate_protocol_config(const Config& cfg) {
+    if (cfg.protocol == "http") return true;
+    if (cfg.protocol != "https") {
+        std::cerr << "Invalid protocol \"" << cfg.protocol << "\", expected \"http\" or \"https\"" << std::endl;
+        return false;
+    }
+#ifndef CROW_ENABLE_SSL
+    std::cerr << "protocol is \"https\" but this build has no SSL support "
+              << "(rebuild with -DKIFTD_ENABLE_SSL=ON)" << std::endl;
+    return false;
+#else
+    if (cfg.ssl_cert.empty() || cfg.ssl_key.empty()) {
+        std::cerr << "protocol is \"https\" but ssl_cert or ssl_key is not configured" << std::endl;
+        return false;
+    }
+    for (const auto& path : {cfg.ssl_cert, cfg.ssl_key}) {
+        if (!fs::is_regular_file(path)) {
+            std::cerr << "SSL file not found: " << path << std::endl;
+            return false;
+        }
+    }
+    return true;
+#endif
+}
+
 static void print_usage() {
     std::cout << "kiftd-cpp - lightweight file server\n"
               << "Usage: kiftd [options]\n"
@@ -73,6 +98,9 @@ int main(int argc, char* argv[]) {
     }
 
     cfg.load(cfg.data_dir + "/config.json");
+    if (!validate_protocol_config(cfg)) {
+        return 1;
+    }
 
     // Initialize database
     Database db;
@@ -176,7 +204,7 @@ int main(int argc, char* argv[]) {
         return crow::response(200, "kiftd-cpp is running. Place web files in " + cfg.web_dir);
     });
 
-    std::cout << "Starting kiftd-cpp on port " << cfg.port << std::endl;
+    std::cout << "Starting kiftd-cpp on " << cfg.protocol << " port " << cfg.port << std::endl;
     std::cout << "Data directory: " << cfg.data_dir << std::endl;
     std::cout << "Web directory: " << cfg.web_dir << std::endl;
     if (cfg.max_upload_size > 0)
@@ -191,7 +219,18 @@ int main(int argc, char* argv[]) {
     fs::create_directories(cfg.temp_dir);
     cleanup_stale_upload_temps(cfg.temp_dir);
 
-    app.port(cfg.port).multithreaded().run();
+    app.port(cfg.port).multithreaded();
+#ifdef CROW_ENABLE_SSL
+    if (cfg.protocol == "https") {
+        try {
+            app.ssl_file(cfg.ssl_cert, cfg.ssl_key);
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to load SSL certificate/key: " << e.what() << std::endl;
+            return 1;
+        }
+    }
+#endif
+    app.run();
 
     return 0;
 }

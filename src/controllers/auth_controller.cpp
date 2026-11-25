@@ -88,7 +88,8 @@ void register_auth_routes(crow::SimpleApp& app, Database& db, Auth& auth, const 
         res.add_header("Set-Cookie",
             "kiftd_user=" + cookie_value +
             "; Path=/; HttpOnly; SameSite=Lax"
-            "; Max-Age=" + std::to_string(max_age));
+            "; Max-Age=" + std::to_string(max_age) +
+            (cfg.protocol == "https" ? "; Secure" : ""));
         return res;
     });
 

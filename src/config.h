@@ -23,6 +23,9 @@ struct TranscodeProfile {
 
 struct Config {
     int port = 8081;
+    std::string protocol = "http";  // "http" or "https"
+    std::string ssl_cert;           // PEM certificate (chain) file, required for https
+    std::string ssl_key;            // PEM private key file, required for https
     std::string data_dir = "data";
     std::string db_path;        // data_dir + "/kiftd.db"
     std::string files_dir;      // data_dir + "/files"

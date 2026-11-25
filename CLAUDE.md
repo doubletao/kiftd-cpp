@@ -77,6 +77,7 @@ All API routes are under `/api/`. Authentication uses cookie sessions. The share
 
 - C++17 required, MSVC `/bigobj` flag enabled for large translation units
 - Crow is configured with `.multithreaded()` for concurrent request handling
+- HTTPS: config `protocol` (`http`/`https`) + `ssl_cert`/`ssl_key` (PEM). TLS comes from LibreSSL source in `third_party/libressl`, built statically when CMake option `KIFTD_ENABLE_SSL` is ON (default). On MSVC `bn_mont.c` must be compiled with `/Od` (optimizer miscompiles it, breaking all handshakes)
 - SPA fallback: non-API, non-share routes serve `index.html` for client-side routing
 - Root folder has empty string `id` — all top-level items have `parent_id = ""`
 - Default admin account: `admin` / `admin` (created on first run)
